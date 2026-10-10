@@ -72,11 +72,16 @@ pub use tpt_acou_vibro as vibro;
 #[cfg(feature = "wave")]
 pub use tpt_acou_wave as wave;
 
+/// Builder for a validated shoebox source–receiver setup. See [`builder`].
+#[cfg(all(feature = "core", feature = "ray"))]
+pub mod builder;
+
 /// Common types for a first program: `use tpt_acoustics::prelude::*;`.
 ///
 /// Available when both `core` and `ray` are enabled (the default).
 #[cfg(all(feature = "core", feature = "ray"))]
 pub mod prelude {
+    pub use crate::builder::{RoomBuilder, Simulation};
     pub use tpt_acou_core::error::AcousticError;
     pub use tpt_acou_core::medium::Medium;
     pub use tpt_acou_core::quantity::{Pressure, SoundPressureLevel};

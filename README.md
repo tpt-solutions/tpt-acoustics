@@ -72,7 +72,7 @@ means a closed-form result; "property" means a `proptest` invariant.
 | `tpt-acou-wave` | Pulsating sphere (BEM, 5 %), cavity FEM modes, FMM vs dense, GMRES vs dense BEM solve | GMRES on the FMM operator |
 | `tpt-acou-vibro` | Mass law, ASTM E413 contour on analytic spectra, beam first mode vs analytic (5 %), FEM→modal→BEM partition TL | Published STC worked example |
 | `tpt-acou-aero` | Monopole scaling, BPF tone, dipole directivity | Published rotor-noise benchmark |
-| `tpt-acou-psycho` | IEC 61672 A-weighting, phon/sone anchor | ITU-R 468 table only partly confirmed; loudness is a simplified Zwicker model (~0.57 sone at 1 kHz/40 dB, not ISO 532-1) |
+| `tpt-acou-psycho` | IEC 61672 A-weighting, phon/sone anchor | ITU-R 468 table only partly confirmed; loudness is a simplified Zwicker model with spreading (~1.02 sone at 1 kHz/40 dB; not certified ISO 532-1) |
 | `tpt-acou-verify` | Proptest invariants (reciprocity, energy, CFL), Kani harnesses | Kani runs in CI on Linux only |
 
 The `todo.md` tracker is the authoritative list of open work. Its Phase 4 is

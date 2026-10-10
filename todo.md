@@ -250,9 +250,10 @@ Applied to every crate below (referenced by name, not repeated per crate):
       confirm all points against the BS.468-4 text, since 31.5 Hz–2.5 kHz and 12.5–20 kHz are
       unconfirmed. Quasi-peak detector not addressed.
 - [ ] **Moore loudness** — unticked in Phase 2 (not implemented). Moore-Glasberg (ISO 532-2) is open.
-- [ ] `zwicker_stationary` *(partly done)*: doc corrected to ~0.57 sone (not 1), test tightened to
-      0.5–0.6, negative SPL allowed, "A-weighting-anchored" wording replaced with Terhardt.
-      **Still open:** spectral spreading is not implemented.
+- [x] `zwicker_stationary`: spectral spreading added (Zwicker's 27 dB/Bark lower slope and
+      level-dependent upper slope). A 1 kHz / 40 dB tone now rates 1.02 sone against 1 sone in
+      ISO 532-1; tests pin it within 5 %. Negative SPL allowed, Terhardt wording fixed. The model
+      is still a simplified approximation, not a certified ISO 532-1 implementation.
 - [x] **Ray tracer** (`tpt-acou-ray/src/ray.rs`): particles keep tracing after capture; detections
       are a separate tally and the partition is `injected = absorbed + remaining`. RT60 test
       tightened from 35% to 10% and passes.
@@ -281,7 +282,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
       `tpt_acou_ray::rir::rir_from_echogram` builds an RIR from the ISM echogram with random signs
       (energy-correct, not phase-correct). The ray-tail hybrid is open: the ray and ISM energy
       normalisations differ, so they need reconciling first.
-- [ ] Optional `serde` support, `rayon` parallel feature (ray tracing, BEM assembly), `wasm32` CI target
+- [ ] Optional `serde` support, `rayon` parallel feature (ray tracing, BEM assembly) *(wasm32 CI target added: `no_std` crates build for `wasm32-unknown-unknown`; `serde` and `rayon` still open)*
 - [ ] criterion benchmarks + regression tracking
 
 ### 4.4 New features (innovation)
@@ -301,8 +302,9 @@ Applied to every crate below (referenced by name, not repeated per crate):
       `partition_stc`, `sphere_radiation_bem`, `fan_noise_fwh`, `optimize_room_gradient`,
       `loudness_a_weighting`, `spatial_audio_vbap`. Each asserts against an analytic or literature
       value. Listed in the README.
-- [ ] `tpt_acoustics::prelude` *(done)* + `RoomBuilder` / `Simulation` builder API (10-line first
-      program). The prelude and a doctested quick start are in; the builder is still open.
+- [x] `tpt_acoustics::prelude` + `RoomBuilder` / `Simulation` builder API (`crates/tpt-acoustics/src/builder.rs`).
+      The builder validates dimensions, source and receiver once; `Simulation` gives the echogram,
+      impulse response and Sabine T60. Still open: a `Simulation` path to ray-traced T30 and the wave solvers.
 - [ ] README: quick start, does/doesn't table and per-crate validation status are done; badges still open.
 - [ ] mdBook cookbook: solver-choice table, Schroeder frequency calculator, units/conventions, glossary
 - [ ] Validation page: analytic/standard reference vs ours, with tolerances
@@ -311,6 +313,6 @@ Applied to every crate below (referenced by name, not repeated per crate):
 
 ### 4.6 Automation & hygiene
 - [x] Dependabot (`.github/dependabot.yml`, cargo + actions; Renovate not used). `cargo semver-checks`, `release-plz` + CHANGELOG.md still open
-- [ ] Coverage job (`cargo llvm-cov`), MSRV job, Windows + macOS test matrix
+- [x] Coverage job (`cargo llvm-cov --summary-only`), MSRV job (1.85, libraries), Windows + macOS test matrix *(added to CI; not yet run on GitHub, so the macOS and MSRV jobs are unverified)*
 - [ ] CI check that ticked todo items reference existing symbols (prevents the Moore-style drift)
 - [x] Issue and PR templates (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`)

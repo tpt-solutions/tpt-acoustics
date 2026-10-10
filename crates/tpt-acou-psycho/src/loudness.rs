@@ -12,9 +12,9 @@
 //!
 //! This is an engineering approximation, *not* a certified ISO 532-1
 //! implementation (the standard's exact threshold and spreading tables are
-//! licensed content). It has no spectral spreading yet, so a single-band tone
-//! rates ~0.57 sone at 1 kHz / 40 dB rather than the 1 sone of the standard;
-//! the test suite pins that value and the model is monotone in level.
+//! licensed content). Spreading uses Zwicker's published slopes; a single
+//! 1 kHz / 40 dB tone rates about 1.02 sone against 1 sone in the standard.
+//! The test suite pins that value and checks that loudness grows with level.
 
 /// Threshold in quiet (dB SPL) of a pure tone, delegated to
 /// `tpt_dsp_core::psychoacoustic::threshold_in_quiet` (Terhardt's analytic
@@ -42,41 +42,63 @@ pub const BARK_CENTERS_HZ: [f64; 24] = [
     2150.0, 2500.0, 2900.0, 3400.0, 4000.0, 4800.0, 5800.0, 7000.0, 8500.0, 10500.0, 13500.0,
 ];
 
+/// Attenuation in dB of a band of level `level_db` and centre `center_hz`
+/// when its energy is heard `dz` Barks away (positive `dz` is higher in
+/// frequency). Zwicker's slopes: 27 dB/Bark toward lower frequencies, and
+/// `24 + 230/f − 0.2·L` dB/Bark toward higher ones, which gets shallower at
+/// high level. The upper slope is clamped at zero.
+fn spreading_attenuation_db(level_db: f64, center_hz: f64, dz: f64) -> f64 {
+    if dz == 0.0 {
+        0.0
+    } else if dz < 0.0 {
+        -27.0 * dz
+    } else {
+        let slope = (24.0 + 230.0 / center_hz - 0.2 * level_db).max(0.0);
+        slope * dz
+    }
+}
+
 /// Simplified Zwicker-style stationary loudness (sone) from band sound
-/// pressure levels.
+/// pressure levels, with spectral spreading.
 ///
 /// `band_levels_db` holds SPL values (dB re 20 µPa) for each of the 24
-/// [`BARK_CENTERS_HZ`]; missing bands (slice shorter than 24) contribute
-/// nothing. A band at or below its threshold contributes nothing, so use
-/// `f64::NEG_INFINITY` (not 0 dB) to mark a band as silent. Specific loudness
-/// per band:
+/// [`BARK_CENTERS_HZ`]. Missing bands (slice shorter than 24) and non-finite
+/// entries (use `f64::NEG_INFINITY` for true silence, not 0 dB) contribute
+/// nothing. Each band's excitation is the spread sum of every band's energy:
 ///
 /// ```text
-/// N'(z) = 0.08 * max(E_z/E_thr(z) - 1, 0)^0.23   [sone/Bark]
+/// E_z = Σ_j 10^((L_j − A(z, j)) / 10)
+/// N'(z) = 0.08 · max(E_z/E_thr(z) − 1, 0)^0.23   [sone/Bark]
 /// ```
 ///
-/// with `E = 10^(L/10)` the band excitation proxy and `E_thr` the
-/// Terhardt threshold-in-quiet excitation at the band center. Total loudness
-/// `N = sum N'(z)` (dz = 1 Bark each). A 1 kHz tone at 40 dB SPL rates about
-/// 0.57 sone under this simplified model (no spreading).
+/// with `A` the spreading attenuation and `E_thr` the Terhardt
+/// threshold-in-quiet excitation at the band centre. Total loudness
+/// `N = Σ_z N'(z)` (one Bark per band). A 1 kHz tone at 40 dB SPL rates
+/// about 1.02 sone, against 1 sone in ISO 532-1.
 ///
-/// Negative SPL values are accepted; they simply fall below threshold.
+/// Negative SPL values are accepted; they fall below threshold.
 ///
 /// # Errors
 /// Currently infallible; the `Result` is kept for API stability.
 pub fn zwicker_stationary(band_levels_db: &[f64]) -> Result<f64, tpt_acou_core::AcousticError> {
+    let n = band_levels_db.len().min(BARK_CENTERS_HZ.len());
     let mut total = 0.0;
-    for (z, &level) in band_levels_db.iter().enumerate() {
-        if z >= BARK_CENTERS_HZ.len() {
-            break;
-        }
+    for z in 0..BARK_CENTERS_HZ.len() {
         let lthr = threshold_in_quiet_db(BARK_CENTERS_HZ[z]);
-        if level <= lthr {
-            continue;
-        }
-        let e = libm::pow(10.0, level / 10.0);
         let ethr = libm::pow(10.0, lthr / 10.0);
-        total += 0.08 * libm::pow(e / ethr - 1.0, 0.23);
+        let mut excitation = 0.0;
+        for j in 0..n {
+            let lj = band_levels_db[j];
+            if !lj.is_finite() {
+                continue;
+            }
+            let dz = z as f64 - j as f64;
+            let attenuation = spreading_attenuation_db(lj, BARK_CENTERS_HZ[j], dz);
+            excitation += libm::pow(10.0, (lj - attenuation) / 10.0);
+        }
+        if excitation > ethr {
+            total += 0.08 * libm::pow(excitation / ethr - 1.0, 0.23);
+        }
     }
     Ok(total)
 }
@@ -103,16 +125,43 @@ mod tests {
 
     #[test]
     fn zwicker_one_khz_tone_near_one_sone() {
-        // A 1 kHz tone at 40 dB SPL: E/E_thr ~ 5000 gives 0.08 * 5000^0.23
-        // ~ 0.57 sone. The ISO 532-1 value is 1 sone; the gap is the missing
-        // spreading, so this pins the model's own value rather than the
-        // standard's.
+        // A 1 kHz tone at 40 dB SPL. With spreading the excitation reaches
+        // the neighbouring bands, so the model gives ~1.02 sone against the
+        // standard's 1 sone. Tolerance is 5 %.
         // Other bands are set to -inf (true silence): 0 dB SPL is NOT silence,
         // since several bands have threshold-in-quiet below 0 dB.
         let mut levels = vec![f64::NEG_INFINITY; 24];
         levels[8] = 40.0; // band 9 centers at 1 kHz
         let n = zwicker_stationary(&levels).unwrap();
-        assert!(n > 0.5 && n < 0.6, "N = {n:.3} sone");
+        assert!((n - 1.0).abs() < 0.05, "N = {n:.3} sone");
+    }
+
+    #[test]
+    fn spreading_slopes_match_zwicker() {
+        // 27 dB/Bark toward lower frequencies, level-dependent toward higher.
+        assert_eq!(spreading_attenuation_db(40.0, 1000.0, 0.0), 0.0);
+        assert!((spreading_attenuation_db(40.0, 1000.0, -1.0) - 27.0).abs() < 1e-12);
+        let upper = spreading_attenuation_db(40.0, 1000.0, 1.0);
+        assert!(
+            (upper - (24.0 + 0.23 - 8.0)).abs() < 1e-9,
+            "upper slope {upper}"
+        );
+        // Louder bands spread less steeply upward, and the slope never goes negative.
+        assert!(spreading_attenuation_db(80.0, 1000.0, 1.0) < upper);
+        assert!(spreading_attenuation_db(400.0, 1000.0, 1.0) >= 0.0);
+    }
+
+    #[test]
+    fn spreading_makes_neighbours_audible() {
+        // Two adjacent equal bands are louder than one band alone, but less
+        // than twice as loud: the second band's energy is partly shared.
+        let mut one = vec![f64::NEG_INFINITY; 24];
+        one[8] = 40.0;
+        let mut two = one.clone();
+        two[9] = 40.0;
+        let n1 = zwicker_stationary(&one).unwrap();
+        let n2 = zwicker_stationary(&two).unwrap();
+        assert!(n2 > n1 && n2 < 2.0 * n1, "one {n1} two {n2}");
     }
 
     #[test]
