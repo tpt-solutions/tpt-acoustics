@@ -1,0 +1,28 @@
+# Compliance study template for `tpt-acou study <file>`.
+#
+# One room (ISO 3382-1 and IEC 60268-16 metrics) and one partition (ASTM E413
+# STC) in a single report. Each section names the standard it belongs to.
+# Ratings the tool does not compute are listed at the end of the report.
+
+kind = "compliance"
+
+[room]
+dimensions = [10.0, 8.0, 6.0]
+# Use either a flat coefficient or a named octave-band finish, not both.
+absorption = 0.15
+# finish = "carpet_on_concrete"
+
+[source]
+position = [2.0, 2.0, 3.0]
+
+[receiver]
+position = [8.0, 6.0, 3.0]
+
+[analysis]
+frequency_hz = 1000.0
+rays = 20000
+max_order = 8
+seed = 7
+
+[partition]
+surface_mass = 5.0

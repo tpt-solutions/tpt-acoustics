@@ -188,8 +188,72 @@ impl RayTracerConfig {
     }
 }
 
+/// Per-ray tally, combined into a [`RayTraceResult`].
+#[derive(Debug, Clone, Default)]
+struct RayTally {
+    /// `(arrival_time_s, energy)` for every receiver pass.
+    detections: Vec<(f64, f64)>,
+    absorbed: f64,
+    remaining: f64,
+    bounces: u64,
+}
+
+/// Deterministic per-ray seed: splitmix64 of the run seed and the ray index.
+/// Each ray has its own stream, so the result does not depend on the order
+/// rays are traced in, and the parallel and sequential paths agree exactly.
+#[must_use]
+pub fn ray_seed(seed: u64, index: u32) -> u64 {
+    let mut z = seed ^ (u64::from(index) + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Runs `trace` for every ray index and returns the tallies in index order.
+#[cfg(feature = "parallel")]
+fn run_rays<F>(n_rays: u32, trace: F) -> Vec<RayTally>
+where
+    F: Fn(u32) -> RayTally + Sync + Send,
+{
+    use rayon::prelude::*;
+    (0..n_rays).into_par_iter().map(trace).collect()
+}
+
+/// Runs `trace` for every ray index and returns the tallies in index order.
+#[cfg(not(feature = "parallel"))]
+fn run_rays<F>(n_rays: u32, trace: F) -> Vec<RayTally>
+where
+    F: Fn(u32) -> RayTally,
+{
+    (0..n_rays).map(trace).collect()
+}
+
+/// Sums per-ray tallies into the run result.
+fn combine(tallies: Vec<RayTally>, n_rays: u32) -> RayTraceResult {
+    let mut out = RayTraceResult {
+        injected: 1.0,
+        ..RayTraceResult::default()
+    };
+    let mut bounces = 0_u64;
+    for t in tallies {
+        for (time, energy) in t.detections {
+            out.detected_times.push(time);
+            out.detected_energies.push(energy);
+        }
+        out.absorbed += t.absorbed;
+        out.remaining += t.remaining;
+        bounces += t.bounces;
+    }
+    out.mean_bounces = bounces as f64 / f64::from(n_rays);
+    out
+}
+
 /// Traces energy particles through a shoebox room (analytic wall
 /// intersection).
+///
+/// Every ray has its own seeded stream (see [`ray_seed`]), so the result is
+/// deterministic for a given seed. With the `parallel` feature the rays are
+/// traced on the rayon pool, with identical output.
 ///
 /// # Errors
 /// Returns [`AcousticError::InvalidArgument`] if the configuration fails
@@ -219,44 +283,38 @@ pub fn trace_shoebox(
     let scatter: Vec<f64> = (0..6)
         .map(|w| room.wall(w).scattering_at(freq_hz))
         .collect();
-
-    let mut rng = Xoshiro256::new(config.seed);
     let e0 = 1.0 / f64::from(config.n_rays);
-    let mut out = RayTraceResult {
-        injected: 1.0,
-        ..RayTraceResult::default()
-    };
-    let mut total_bounces = 0_u64;
 
-    for _ in 0..config.n_rays {
+    let trace = |index: u32| -> RayTally {
+        let mut rng = Xoshiro256::new(ray_seed(config.seed, index));
+        let mut tally = RayTally::default();
         let mut p = src;
         let mut dir = rng.next_unit_direction();
         let mut e = e0;
         let mut t = 0.0_f64;
-
         loop {
             if t > config.time_limit_s || e < config.min_energy {
-                out.remaining += e;
+                tally.remaining += e;
                 break;
             }
             let Some((t_hit, normal, wall)) = box_exit(p, dir, lx, ly, lz) else {
-                out.remaining += e;
+                tally.remaining += e;
                 break;
             };
             let from = p;
             let to = from + dir * t_hit;
             if segment_near_point(from, to, rcv, config.capture_radius) {
                 let (_, dist_along) = point_segment_closest(rcv, from, to);
-                out.detected_times
-                    .push(t + dist_along / config.speed_of_sound);
+                tally
+                    .detections
+                    .push((t + dist_along / config.speed_of_sound, e));
                 // The particle keeps tracing: terminating at first capture
                 // would truncate the late decay and bias T30 steep.
-                out.detected_energies.push(e);
             }
-            out.absorbed += e * alpha[wall];
+            tally.absorbed += e * alpha[wall];
             e *= 1.0 - alpha[wall];
             t += t_hit / config.speed_of_sound;
-            total_bounces += 1;
+            tally.bounces += 1;
             dir = if rng.next_f64() < scatter[wall] {
                 cosine_hemisphere(&mut rng, normal)
             } else {
@@ -264,16 +322,16 @@ pub fn trace_shoebox(
             };
             p = to + normal * 1e-9;
         }
-    }
-    out.mean_bounces = total_bounces as f64 / f64::from(config.n_rays);
-    Ok(out)
+        tally
+    };
+    Ok(combine(run_rays(config.n_rays, trace), config.n_rays))
 }
 
 /// Traces energy particles through an arbitrary (closed) triangle scene,
 /// intersecting via the BVH and reading coefficients from the hit material.
 ///
 /// For a ray that escapes the scene (open mesh), leftover energy is counted
-/// as `remaining`.
+/// as `remaining`. Seeding and parallelism are as for [`trace_shoebox`].
 ///
 /// # Errors
 /// Returns [`AcousticError::InvalidArgument`] if the configuration fails
@@ -286,46 +344,39 @@ pub fn trace_scene(
     config: &RayTracerConfig,
 ) -> Result<RayTraceResult, AcousticError> {
     config.validate()?;
-    let mut rng = Xoshiro256::new(config.seed);
     let e0 = 1.0 / f64::from(config.n_rays);
-    let mut out = RayTraceResult {
-        injected: 1.0,
-        ..RayTraceResult::default()
-    };
-    let mut total_bounces = 0_u64;
 
-    for _ in 0..config.n_rays {
+    let trace = |index: u32| -> RayTally {
+        let mut rng = Xoshiro256::new(ray_seed(config.seed, index));
+        let mut tally = RayTally::default();
         let mut p = src;
         let mut dir = rng.next_unit_direction();
         let mut e = e0;
         let mut t = 0.0_f64;
-
         loop {
             if t > config.time_limit_s || e < config.min_energy {
-                out.remaining += e;
+                tally.remaining += e;
                 break;
             }
             let Some(hit) = scene.hit(p, dir, f64::INFINITY) else {
-                out.remaining += e;
+                tally.remaining += e;
                 break;
             };
             let from = p;
             let to = hit.point;
             if segment_near_point(from, to, rcv, config.capture_radius) {
                 let (_, dist_along) = point_segment_closest(rcv, from, to);
-                out.detected_times
-                    .push(t + dist_along / config.speed_of_sound);
-                // The particle keeps tracing: terminating at first capture
-                // would truncate the late decay and bias T30 steep.
-                out.detected_energies.push(e);
+                tally
+                    .detections
+                    .push((t + dist_along / config.speed_of_sound, e));
             }
             let material = &scene.materials()[hit.material];
             let a = material.absorption_at(freq_hz);
             let s = material.scattering_at(freq_hz);
-            out.absorbed += e * a;
+            tally.absorbed += e * a;
             e *= 1.0 - a;
             t += hit.t / config.speed_of_sound;
-            total_bounces += 1;
+            tally.bounces += 1;
             dir = if rng.next_f64() < s {
                 cosine_hemisphere(&mut rng, hit.normal)
             } else {
@@ -333,9 +384,9 @@ pub fn trace_scene(
             };
             p = to + hit.normal * 1e-9;
         }
-    }
-    out.mean_bounces = total_bounces as f64 / f64::from(config.n_rays);
-    Ok(out)
+        tally
+    };
+    Ok(combine(run_rays(config.n_rays, trace), config.n_rays))
 }
 
 /// Backward-integrated (Schroeder) decay curve sampled at `bin_s` spacing:
@@ -644,5 +695,38 @@ mod tests {
     fn rt60_curve_rejects_short_data() {
         assert!(rt60_from_curve(&[], 0.005).is_none());
         assert!(rt60_from_curve(&[1.0, 0.999, 0.998], 0.005).is_none());
+    }
+}
+
+#[cfg(test)]
+mod determinism_tests {
+    use super::*;
+    use crate::material::BoundaryMaterial;
+
+    #[test]
+    fn same_seed_gives_identical_tallies() {
+        let room =
+            ShoeboxRoom::uniform([6.0, 5.0, 3.0], BoundaryMaterial::concrete_painted()).unwrap();
+        let config = RayTracerConfig {
+            n_rays: 800,
+            time_limit_s: 0.5,
+            capture_radius: 0.4,
+            min_energy: 1e-9,
+            seed: 123,
+            speed_of_sound: crate::ism::SPEED_OF_SOUND_REFERENCE,
+        };
+        let src = Vec3::new(1.0, 1.0, 1.5);
+        let rcv = Vec3::new(4.5, 3.5, 1.5);
+        let a = trace_shoebox(&room, src, rcv, 1000.0, &config).unwrap();
+        let b = trace_shoebox(&room, src, rcv, 1000.0, &config).unwrap();
+        assert_eq!(a.detected_times, b.detected_times);
+        assert_eq!(a.detected_energies, b.detected_energies);
+        assert_eq!(a.absorbed, b.absorbed);
+    }
+
+    #[test]
+    fn ray_seeds_differ_per_ray_and_per_run() {
+        assert_ne!(ray_seed(1, 0), ray_seed(1, 1));
+        assert_ne!(ray_seed(1, 0), ray_seed(2, 0));
     }
 }

@@ -166,6 +166,75 @@ impl Simulation {
         self.room.sabine_rt60(freq_hz)
     }
 
+    /// Ray-traced T30 (seconds) at 1 kHz from `n_rays` particles, or `None`
+    /// if the decay is too short to fit.
+    ///
+    /// # Errors
+    /// Propagates the ray tracer's validation errors.
+    pub fn ray_t30(&self, n_rays: u32, seed: u64) -> Result<Option<f64>, AcousticError> {
+        use tpt_acou_ray::ism::SPEED_OF_SOUND_REFERENCE;
+        use tpt_acou_ray::ray::{rt60_from_curve, schroeder_curve, trace_shoebox, RayTracerConfig};
+        let config = RayTracerConfig {
+            n_rays,
+            time_limit_s: 3.0,
+            capture_radius: 0.5,
+            min_energy: 1e-9,
+            seed,
+            speed_of_sound: SPEED_OF_SOUND_REFERENCE,
+        };
+        let traced = trace_shoebox(&self.room, self.source, self.receiver, 1000.0, &config)?;
+        let curve = schroeder_curve(&traced.detected_times, &traced.detected_energies, 0.005);
+        Ok(rt60_from_curve(&curve, 0.005))
+    }
+
+    /// Speech Transmission Index (male weights) from the hybrid RIR: image
+    /// sources before the crossover, ray tail after it. Falls back to the
+    /// image-source response alone if the ray tracer captured no energy in the
+    /// calibration window.
+    ///
+    /// # Errors
+    /// Propagates the tracer, echogram and STI errors.
+    pub fn sti(&self, n_rays: u32, seed: u64) -> Result<f64, AcousticError> {
+        use tpt_acou_ray::ism::SPEED_OF_SOUND_REFERENCE;
+        use tpt_acou_ray::ray::{trace_shoebox, RayTracerConfig};
+        use tpt_acou_ray::rir::hybrid_rir;
+        use tpt_acou_ray::sti::{sti_from_rir, STI_WEIGHTS_MALE};
+        let fs = 48_000.0;
+        let echogram = self.echogram(1000.0, 12)?;
+        let config = RayTracerConfig {
+            n_rays,
+            time_limit_s: 3.0,
+            capture_radius: 0.5,
+            min_energy: 1e-9,
+            seed,
+            speed_of_sound: SPEED_OF_SOUND_REFERENCE,
+        };
+        let traced = trace_shoebox(&self.room, self.source, self.receiver, 1000.0, &config)?;
+        let samples = match hybrid_rir(
+            &echogram,
+            &traced.detected_times,
+            &traced.detected_energies,
+            fs,
+            0.08,
+            0.01,
+            seed,
+        ) {
+            Ok(h) => h.samples,
+            Err(_) => rir_from_echogram(&echogram, fs, seed)?,
+        };
+        sti_from_rir(&samples, fs, &STI_WEIGHTS_MALE)
+    }
+
+    /// Sound strength G in dB from the image-source echogram (12 orders).
+    ///
+    /// # Errors
+    /// Propagates the echogram errors. Returns `None` inside the `Ok` if the
+    /// echogram carries no energy.
+    pub fn strength_db(&self) -> Result<Option<f64>, AcousticError> {
+        let echogram = self.echogram(1000.0, 12)?;
+        Ok(tpt_acou_ray::iso3382::strength_db(&echogram))
+    }
+
     /// Distance from source to receiver in metres.
     #[must_use]
     pub fn direct_distance(&self) -> f64 {
@@ -233,6 +302,19 @@ mod tests {
         let weights: f64 = echo.iter().map(|&(_, w)| w).sum();
         // Coincident arrivals can add coherently, so allow a loose bound.
         assert!(energy > 0.0 && energy <= 1.5 * weights + 1e-12);
+    }
+
+    #[test]
+    fn ray_t30_sti_and_strength_are_available_from_the_simulation() {
+        let sim = room_builder().build().unwrap();
+        let t30 = sim.ray_t30(5_000, 3).unwrap();
+        if let Some(t) = t30 {
+            assert!(t > 0.0 && t.is_finite(), "{t}");
+        }
+        let sti = sim.sti(5_000, 3).unwrap();
+        assert!((0.0..=1.0).contains(&sti), "{sti}");
+        let g = sim.strength_db().unwrap().expect("energy present");
+        assert!(g.is_finite());
     }
 
     #[test]

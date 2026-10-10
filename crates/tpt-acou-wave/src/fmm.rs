@@ -268,10 +268,173 @@ impl SingleLevelFmm {
     }
 }
 
+impl SingleLevelFmm {
+    /// Far-cluster expansion evaluated at `x`: `Σ_nm J_nm(x) M_nm`, the
+    /// single-layer potential of the cluster's sources. Valid only for `x`
+    /// outside the cluster's far criterion.
+    fn far_potential(&self, c: &Cluster, x: Vec3, k: f64) -> Complex {
+        let dx = x - c.center;
+        let rx = dx.norm();
+        let ct = dx.z / rx;
+        let phi = libm::atan2(dx.y, dx.x);
+        let mut sum = Complex::new(0.0, 0.0);
+        let prefac = Complex::new(0.0, -k);
+        for n in 0..=P {
+            let h = hankel2(n, k * rx);
+            for m in -(n as i32)..=(n as i32) {
+                let y = spherical_harmonic(n, m, ct, phi);
+                sum = sum + y * c.moments[nm_index(n, m)] * prefac * h;
+            }
+        }
+        sum
+    }
+
+    /// Applies the adjoint double-layer operator to a density:
+    /// `(K′μ)_i = Σ_j A_j μ_j · n_i·∇_x G(x_i − y_j)`, the operator in the
+    /// exterior Neumann equation `(K′ − ½I)σ = q`.
+    ///
+    /// Far clusters use the field-side normal derivative of the multipole
+    /// expansion, by a central difference at step `1/(100k)`, and a stricter
+    /// far criterion (6 cluster radii) to keep the derivative accurate. Near
+    /// clusters use the exact kernel, and the self term is zero as in the dense
+    /// matrix. Accuracy is about 10⁻⁵ relative for well-separated clusters.
+    ///
+    /// # Errors
+    /// Returns [`crate::bem::BemError::DataLengthMismatch`] if `mu` does not
+    /// match the mesh.
+    pub fn apply_adjoint_double_layer(
+        &mut self,
+        bem: &HelmholtzBem,
+        mu: &[Complex],
+    ) -> Result<Vec<Complex>, crate::bem::BemError> {
+        if mu.len() != bem.mesh().len() {
+            return Err(crate::bem::BemError::DataLengthMismatch);
+        }
+        self.assemble(bem, mu);
+        let k = bem.k();
+        let els = bem.mesh().elements();
+        let step = 1.0 / (100.0 * k);
+        let mut out = vec![Complex::new(0.0, 0.0); els.len()];
+        for (i, e_i) in els.iter().enumerate() {
+            let x = e_i.centroid;
+            let n = e_i.normal;
+            let mut acc = Complex::new(0.0, 0.0);
+            for c in &self.clusters {
+                if c.elements.is_empty() {
+                    continue;
+                }
+                let rx = (x - c.center).norm();
+                if rx > 6.0 * c.radius && k * rx > 5.0 && rx > 1e-9 {
+                    let plus = self.far_potential(c, x + n * step, k);
+                    let minus = self.far_potential(c, x - n * step, k);
+                    acc = acc + (plus - minus) * (1.0 / (2.0 * step));
+                } else {
+                    for &j in &c.elements {
+                        if j == i {
+                            continue;
+                        }
+                        let d = x - els[j].centroid;
+                        let r = d.norm();
+                        let g =
+                            Complex::from_polar(1.0 / (4.0 * core::f64::consts::PI * r), -k * r);
+                        let dn = d.dot(n) / r;
+                        // n·∇_x G = −G (ik + 1/r)·(d·n)/r
+                        let kernel =
+                            g * (Complex::new(0.0, k) + Complex::new(1.0 / r, 0.0)) * (-dn);
+                        acc = acc + kernel * mu[j] * els[j].area;
+                    }
+                }
+            }
+            out[i] = acc;
+        }
+        Ok(out)
+    }
+}
+
+/// Exterior Neumann solve `(K′ − ½I)σ = q` by GMRES, with the adjoint
+/// double-layer operator applied through the single-level FMM. Returns the
+/// density and convergence information (see [`crate::krylov::GmresResult`]).
+///
+/// # Errors
+/// Returns [`crate::bem::BemError::DataLengthMismatch`] for mismatched data.
+pub fn solve_exterior_neumann_fmm(
+    bem: &HelmholtzBem,
+    q: &[Complex],
+    config: crate::krylov::GmresConfig,
+) -> Result<crate::krylov::GmresResult, crate::bem::BemError> {
+    if q.len() != bem.mesh().len() {
+        return Err(crate::bem::BemError::DataLengthMismatch);
+    }
+    let mut fmm = SingleLevelFmm::new(bem)?;
+    let half = Complex::new(0.5, 0.0);
+    crate::krylov::gmres(
+        |v| {
+            // The FMM path cannot fail for a length-checked vector.
+            let kv = fmm.apply_adjoint_double_layer(bem, v).unwrap_or_default();
+            kv.iter().zip(v).map(|(a, b)| *a - *b * half).collect()
+        },
+        q,
+        None,
+        None,
+        config,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mesh::BoundaryMesh;
+
+    #[test]
+    fn adjoint_double_layer_fmm_matches_the_dense_matrix() {
+        let mesh = BoundaryMesh::sphere(1.0, 8, 12).unwrap();
+        let bem = HelmholtzBem::new(mesh, 1.5).unwrap();
+        let n = bem.mesh().len();
+        let mu: Vec<Complex> = (0..n)
+            .map(|i| Complex::new(1.0 + 0.1 * (i % 7) as f64, 0.2 * ((i % 5) as f64 - 2.0)))
+            .collect();
+        let dense = bem.adjoint_double_layer_matrix();
+        let mut fmm = SingleLevelFmm::new(&bem).unwrap();
+        let fast = fmm.apply_adjoint_double_layer(&bem, &mu).unwrap();
+        let mut num = 0.0_f64;
+        let mut den = 0.0_f64;
+        for i in 0..n {
+            let mut exact = Complex::new(0.0, 0.0);
+            for j in 0..n {
+                exact = exact + dense[(i, j)] * mu[j];
+            }
+            num += (fast[i] - exact).norm_sqr();
+            den += exact.norm_sqr();
+        }
+        let rel = (num / den).sqrt();
+        assert!(rel < 1e-3, "relative error {rel:.3e}");
+    }
+
+    #[test]
+    fn fmm_neumann_solve_matches_the_dense_solve() {
+        let mesh = BoundaryMesh::sphere(1.0, 8, 12).unwrap();
+        let bem = HelmholtzBem::new(mesh, 1.5).unwrap();
+        let n = bem.mesh().len();
+        let q: Vec<Complex> = (0..n)
+            .map(|i| Complex::new(1.0, 0.3 * (i as f64 * 0.37).sin()))
+            .collect();
+        let dense = bem.solve_exterior_neumann(&q).unwrap();
+        let config = crate::krylov::GmresConfig {
+            restart: 40,
+            max_iterations: 400,
+            tolerance: 1e-6,
+        };
+        let res = solve_exterior_neumann_fmm(&bem, &q, config).unwrap();
+        assert!(res.converged, "relative residual {}", res.relative_residual);
+        let mut num = 0.0_f64;
+        let mut den = 0.0_f64;
+        for (a, b) in res.x.iter().zip(&dense) {
+            num += (*a - *b).norm_sqr();
+            den += b.norm_sqr();
+        }
+        let rel = (num / den).sqrt();
+        assert!(rel < 1e-3, "relative difference {rel:.3e}");
+    }
 
     #[test]
     fn fmm_matvec_matches_dense() {

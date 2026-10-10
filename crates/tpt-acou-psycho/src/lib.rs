@@ -30,6 +30,7 @@ extern crate alloc;
 pub mod ambisonics;
 pub mod hrtf;
 pub mod loudness;
+pub mod loudness_moore;
 pub mod masking;
 pub mod spectrum;
 pub mod vbap;

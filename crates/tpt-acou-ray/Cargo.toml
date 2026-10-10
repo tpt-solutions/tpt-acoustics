@@ -15,6 +15,13 @@ categories.workspace = true
 tpt-acou-core = { path = "../tpt-acou-core", version = "1.0.0", default-features = false }
 tpt-math-linalg-complex = { workspace = true }
 libm = { workspace = true }
+rayon = { version = "1", optional = true }
+
+[features]
+# Trace rays on the rayon pool. Output is identical to the sequential build,
+# because every ray has its own seeded stream. Rayon needs std, so the crate
+# links std only with this feature.
+parallel = ["dep:rayon"]
 
 [lints]
 workspace = true

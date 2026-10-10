@@ -11,6 +11,7 @@ use libm::sqrt;
 
 /// A 3-component double-precision vector (metres unless documented otherwise).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Vec3 {
     /// x component.
     pub x: f64,
@@ -219,5 +220,18 @@ mod tests {
         assert_eq!(a.lerp(b, 1.0), b);
         let m = a.lerp(b, 0.5);
         assert!((m.y - 2.0).abs() < TOL);
+    }
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use super::Vec3;
+
+    #[test]
+    fn vec3_round_trips_through_json() {
+        let v = Vec3::new(1.5, -2.0, 0.25);
+        let text = serde_json::to_string(&v).unwrap();
+        let back: Vec3 = serde_json::from_str(&text).unwrap();
+        assert_eq!(v, back);
     }
 }

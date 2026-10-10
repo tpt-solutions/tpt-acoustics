@@ -10,6 +10,7 @@ members = [
     "crates/tpt-acou-verify",
     "crates/tpt-acoustics",
     "crates/tpt-acou-cli",
+    "crates/tpt-acou-wasm",
 ]
 
 [workspace.package]

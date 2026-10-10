@@ -17,11 +17,19 @@ default = ["materials"]
 # (github.com/tpt-solutions/tpt-materials). Off keeps the crate fully
 # no_std (the database crate is std-linked via serde_json).
 materials = ["dep:tpt-mat-database"]
+# Derive serde traits on the value types. Off by default, so the crate stays
+# dependency-light; `Medium` and `Solid` serialise only, because their
+# constructors validate and a derived `Deserialize` would skip that check.
+serde = ["dep:serde"]
 
 [dependencies]
 tpt-math-linalg-complex = { workspace = true }
 libm = { workspace = true }
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 tpt-mat-database = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json = "1"

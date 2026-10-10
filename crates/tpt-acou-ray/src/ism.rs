@@ -242,6 +242,78 @@ impl ShoeboxRoom {
     /// # Errors
     /// Propagates [`ShoeboxRoom::image_sources`] and
     /// [`tpt_acou_core::wave::free_field_green`] errors.
+    /// Transfer function with locally reacting complex wall impedances.
+    ///
+    /// `z_norm[w]` is the normalised impedance `Z_w / (ρc)` of wall `w`
+    /// (indices as in [`WALL_LOW_X`] and following). Each reflection uses the
+    /// oblique coefficient `R = (z cos θ − 1)/(z cos θ + 1)`. The incidence
+    /// angle comes from the unfolded image path: for a wall whose normal is
+    /// along axis `a`, `cos θ = |D_a|/|D|`, where `D` is the image-to-receiver
+    /// vector. A rigid wall is `z → ∞` (`R = 1`). A wall with `z = 1` reflects
+    /// nothing at normal incidence only: `R` vanishes where `z cos θ = 1`, so
+    /// oblique paths still reflect. Passive walls (`Re z > 0`) have `|R| ≤ 1`.
+    ///
+    /// # Errors
+    /// Returns [`AcousticError::InvalidGeometry`] for a receiver outside the
+    /// room, and [`AcousticError::InvalidArgument`] for an impedance with a
+    /// non-positive real part (a passive wall cannot have one).
+    pub fn transfer_function_impedance(
+        &self,
+        src: Vec3,
+        rcv: Vec3,
+        freqs_hz: &[f64],
+        max_order: u32,
+        medium: &Medium,
+        z_norm: &[Complex; 6],
+    ) -> Result<Vec<Complex>, AcousticError> {
+        if z_norm
+            .iter()
+            .any(|z| !(z.re.is_finite() && z.im.is_finite()) || z.re <= 0.0)
+        {
+            return Err(AcousticError::InvalidArgument(
+                "wall impedance must have a positive real part",
+            ));
+        }
+        if !self.contains(rcv) {
+            return Err(AcousticError::InvalidGeometry(
+                "ISM receiver must lie strictly inside the room",
+            ));
+        }
+        let images = self.image_sources(src, max_order)?;
+        let mut out = vec![Complex::new(0.0, 0.0); freqs_hz.len()];
+        for (f_idx, &f) in freqs_hz.iter().enumerate() {
+            let k = medium
+                .wavenumber(tpt_acou_core::Frequency::hertz(f)?)?
+                .rad_per_m();
+            let mut sum = Complex::new(0.0, 0.0);
+            for img in &images {
+                let disp = img.position - rcv;
+                let d = disp.norm();
+                if d < 1e-9 {
+                    continue;
+                }
+                let disp_axes = [disp.x, disp.y, disp.z];
+                let mut rc = Complex::new(1.0, 0.0);
+                for &w in &img.walls {
+                    let cos_theta = (disp_axes[w / 2] / d).abs();
+                    let zc = z_norm[w] * cos_theta;
+                    let one = Complex::new(1.0, 0.0);
+                    rc = rc * ((zc - one) / (zc + one));
+                }
+                let g = free_field_green(k, d)?;
+                sum = sum + g * rc;
+            }
+            out[f_idx] = sum;
+        }
+        Ok(out)
+    }
+
+    /// Transfer function with real amplitude reflection coefficients from the
+    /// wall absorption (no phase, no angle dependence).
+    ///
+    /// # Errors
+    /// Returns [`AcousticError::InvalidGeometry`] for a receiver outside the
+    /// room, and propagates image-source and Green's-function errors.
     pub fn transfer_function(
         &self,
         src: Vec3,
@@ -498,6 +570,53 @@ mod tests {
         )
         .unwrap();
         assert!((h[0] - expected).norm() < 1e-15);
+    }
+
+    #[test]
+    fn impedance_walls_reduce_to_known_limits() {
+        let r = room();
+        let s = src();
+        let g = Vec3::new(3.0, 2.5, 2.0);
+        let air = Medium::air_20c();
+        let freqs = [250.0, 1000.0, 3150.0];
+        // Very stiff walls: R → 1, so the rigid-wall transfer function.
+        let stiff = [Complex::new(1.0e9, 0.0); 6];
+        // The reference is a genuinely rigid room of the same size.
+        let rigid_room = ShoeboxRoom::uniform(r.dims(), BoundaryMaterial::rigid()).unwrap();
+        let rigid = rigid_room.transfer_function(s, g, &freqs, 3, &air).unwrap();
+        let stiff_tf = r
+            .transfer_function_impedance(s, g, &freqs, 3, &air, &stiff)
+            .unwrap();
+        for (a, b) in rigid.iter().zip(&stiff_tf) {
+            assert!(
+                (*a - *b).norm() <= 1e-6 * a.norm().max(1e-12),
+                "{a:?} vs {b:?}"
+            );
+        }
+        // A matched wall (z = 1) changes the response: oblique paths still
+        // reflect, so it differs from both the rigid and the direct-only case.
+        let matched = [Complex::new(1.0, 0.0); 6];
+        let matched_tf = r
+            .transfer_function_impedance(s, g, &freqs, 3, &air, &matched)
+            .unwrap();
+        let direct = r.transfer_function(s, g, &freqs, 0, &air).unwrap();
+        for ((m, d), rig) in matched_tf.iter().zip(&direct).zip(&rigid) {
+            assert!((*m - *d).norm() > 1e-6 * d.norm(), "matched equals direct");
+            assert!(
+                (*m - *rig).norm() > 1e-6 * rig.norm(),
+                "matched equals rigid"
+            );
+        }
+    }
+
+    #[test]
+    fn impedance_walls_reject_passive_violations() {
+        let r = room();
+        let air = Medium::air_20c();
+        let bad = [Complex::new(-0.5, 0.0); 6];
+        assert!(r
+            .transfer_function_impedance(src(), Vec3::new(3.0, 2.5, 2.0), &[1000.0], 1, &air, &bad)
+            .is_err());
     }
 
     #[test]

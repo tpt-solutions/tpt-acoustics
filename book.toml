@@ -1,0 +1,15 @@
+# mdBook layout over the markdown in docs/. Build with `mdbook build`, which
+# writes to book/. The pages are the cookbook and the validation reference.
+
+[book]
+title = "tpt-acoustics"
+description = "Pure-Rust computational acoustics: cookbook and validation reference"
+authors = ["TPT Solutions"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/tpt-solutions/tpt-acoustics"

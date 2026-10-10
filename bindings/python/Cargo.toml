@@ -1,0 +1,19 @@
+[package]
+name = "tpt-acoustics-py"
+description = "Python bindings for tpt-acoustics (PyO3)"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "tpt_acoustics"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+tpt-acoustics = { path = "../../crates/tpt-acoustics" }
+
+# This crate is its own workspace, so the main workspace build does not need a
+# Python interpreter. Build it with `maturin develop` from this directory.
+[workspace]

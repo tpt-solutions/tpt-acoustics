@@ -115,6 +115,24 @@ pub fn reverberation_times(rir: &[f64], fs: f64) -> ReverbTimes {
     }
 }
 
+/// Sound strength `G` in dB (ISO 3382-1): the total energy of the response
+/// relative to the free-field direct sound of the same source at 10 m. The
+/// free-field energy of a unit source at distance `d` is `1/(4πd)²`, the
+/// normalisation used by the image-source echogram, so `G` is the ratio of
+/// the summed echogram weights to `1/(4π·10)²`.
+///
+/// Returns `None` if the echogram carries no energy.
+#[must_use]
+pub fn strength_db(echogram: &[(f64, f64)]) -> Option<f64> {
+    let total: f64 = echogram.iter().map(|&(_, w)| w).sum();
+    if !(total.is_finite() && total > 0.0) {
+        return None;
+    }
+    let denom = 4.0 * core::f64::consts::PI * 10.0;
+    let reference = 1.0 / (denom * denom);
+    Some(10.0 * libm::log10(total / reference))
+}
+
 /// Schroeder frequency in Hz, above which a room's modal overlap is high
 /// enough for statistical (ray and diffuse-field) methods to apply:
 /// `f_S = 2000 √(T / V)` with `T` the reverberation time in seconds and `V`
@@ -132,6 +150,19 @@ pub fn schroeder_frequency_hz(t60_s: f64, volume_m3: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strength_is_zero_for_the_ten_metre_direct_sound() {
+        // A single direct arrival at 10 m is exactly the reference: G = 0 dB.
+        let w10 = 1.0 / (4.0 * core::f64::consts::PI * 10.0).powi(2);
+        let g = strength_db(&[(0.03, w10)]).unwrap();
+        assert!(g.abs() < 1e-12, "{g}");
+        // At 5 m the direct energy is 4× larger: +6.02 dB.
+        let w5 = 1.0 / (4.0 * core::f64::consts::PI * 5.0).powi(2);
+        let g5 = strength_db(&[(0.015, w5)]).unwrap();
+        assert!((g5 - 10.0 * libm::log10(4.0)).abs() < 1e-9, "{g5}");
+        assert!(strength_db(&[]).is_none());
+    }
 
     #[test]
     fn schroeder_frequency_worked_example() {

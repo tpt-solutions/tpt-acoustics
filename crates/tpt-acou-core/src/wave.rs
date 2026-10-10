@@ -13,6 +13,7 @@ use tpt_math_linalg_complex::Complex;
 
 /// Frequency in hertz.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Frequency(f64);
 
 impl Frequency {
@@ -56,6 +57,7 @@ impl Frequency {
 
 /// Wavenumber in radians per metre (magnitude of the wave vector).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Wavenumber(f64);
 
 impl Wavenumber {

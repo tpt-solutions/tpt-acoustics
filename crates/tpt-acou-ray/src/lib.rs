@@ -21,16 +21,25 @@
 #![forbid(unsafe_code)]
 extern crate alloc;
 
+#[cfg(feature = "parallel")]
+extern crate std;
+
+pub mod broadband;
 pub mod bvh;
+pub mod database;
+pub mod design;
 pub mod differentiable;
+pub mod fft;
 pub mod ism;
 pub mod iso3382;
 pub mod material;
+pub mod modal;
 pub mod obj;
 pub mod ray;
 pub mod rir;
 pub mod rng;
 pub mod scene;
+pub mod sti;
 pub mod stl;
 pub use tpt_acou_core::vec3;
 

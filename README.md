@@ -1,5 +1,8 @@
 # tpt-acoustics
 
+[![CI](https://github.com/tpt-solutions/tpt-acoustics/actions/workflows/ci.yml/badge.svg)](https://github.com/tpt-solutions/tpt-acoustics/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+
 A pure-Rust, AI-native computational acoustics library: geometric room acoustics,
 wave acoustics (BEM/FEM for the Helmholtz equation), aeroacoustics, vibroacoustics,
 and psychoacoustic modeling — **no C/C++ FFI, no external solver dependencies**.

@@ -192,8 +192,10 @@ pub fn rotating_ring_pressure(
     if omega == 0.0 {
         return 0.0;
     }
-    // Central-difference step: 1/32 of a revolution.
-    let h = core::f64::consts::TAU / (32.0 * omega.abs());
+    // Central-difference step: 1/512 of a blade-passing period. The signal has
+    // content at multiples of B·Ω, so the step must scale with B·Ω (a step set
+    // by the rotation alone leaves the blade-passing harmonic ~10% low).
+    let h = core::f64::consts::TAU / (512.0 * f64::from(blade_count) * omega.abs());
     let mut total = 0.0;
     for b in 0..blade_count {
         let theta0 = core::f64::consts::TAU * b as f64 / f64::from(blade_count);
@@ -246,6 +248,7 @@ fn ring_retarded_time(
 mod tests {
     use super::*;
     use crate::source::TimeSignal;
+    use tpt_math_linalg_complex::Complex;
 
     #[test]
     fn stationary_monopole_matches_curle_like_scaling() {
@@ -345,6 +348,74 @@ mod tests {
         assert!(
             amp_bpf > 4.0 * amp_off.max(1e-12),
             "BPF amp {amp_bpf:.3e} vs off-tone {amp_off:.3e}"
+        );
+    }
+
+    /// Blade-passing harmonic amplitude from the retarded-time quadrature.
+    ///
+    /// For a far observer at polar angle `θ` from the rotation axis, the
+    /// harmonic `k = mB` of one blade's Fourier series is
+    /// `c_k = (q/4πR)(1/2π)∫ e^{−iks} e^{ikA cos s}(−A cos s)/(1 + A sin s)² ds`,
+    /// with `A = M_t sin θ`. The `B`-blade ring adds `B·c_k`, so the real
+    /// amplitude is `2B|c_k|`. This follows from `p dt = (q/4πR) dg` and the
+    /// retarded-time phase, and it is evaluated here by trapezoidal quadrature,
+    /// which is exact for periodic integrands.
+    fn bpf_amplitude_quadrature(
+        blades: u32,
+        mach_tip: f64,
+        theta: f64,
+        r: f64,
+        q: f64,
+        m: u32,
+    ) -> f64 {
+        let a = mach_tip * libm::sin(theta);
+        let k = f64::from(m * blades);
+        let n = 4096;
+        let mut sum = Complex::new(0.0, 0.0);
+        for j in 0..n {
+            let s = core::f64::consts::TAU * j as f64 / n as f64;
+            let g = -a * libm::cos(s) / ((1.0 + a * libm::sin(s)) * (1.0 + a * libm::sin(s)));
+            let phase = Complex::from_polar(1.0, -k * s + k * a * libm::cos(s));
+            sum = sum + phase * g;
+        }
+        let c = sum * (1.0 / n as f64) * (q / (4.0 * core::f64::consts::PI * r));
+        2.0 * f64::from(blades) * c.norm()
+    }
+
+    #[test]
+    fn ring_bpf_matches_the_retarded_time_quadrature() {
+        // Far observer (R = 50 m), polar angle 60°, tip Mach ≈ 0.023.
+        let amb = Ambient::air_20c();
+        let blades = 4_u32;
+        let rev_per_s = 50.0;
+        let omega = core::f64::consts::TAU * rev_per_s;
+        let radius = 0.25;
+        let r_obs = 50.0;
+        let theta = core::f64::consts::FRAC_PI_3;
+        let observer = Vec3::new(r_obs * libm::sin(theta), 0.0, r_obs * libm::cos(theta));
+        let sr = 8192.0_f64;
+        let n = 8192;
+        // One second holds exactly 200 blade-passing periods, so the DFT is clean.
+        let series: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = 0.5 + i as f64 / sr;
+                rotating_ring_pressure(&amb, blades, radius, omega, 1.0, observer, t)
+            })
+            .collect();
+        let bpf = f64::from(blades) * rev_per_s;
+        let (mut re, mut im) = (0.0, 0.0);
+        for (i, &x) in series.iter().enumerate() {
+            let phase = core::f64::consts::TAU * bpf * i as f64 / sr;
+            re += x * libm::cos(phase);
+            im -= x * libm::sin(phase);
+        }
+        let numeric = 2.0 * libm::sqrt(re * re + im * im) / n as f64;
+        let mach_tip = radius * omega / amb.c0;
+        let quadrature = bpf_amplitude_quadrature(blades, mach_tip, theta, r_obs, 1.0, 1) * omega;
+        let rel = (numeric - quadrature).abs() / quadrature;
+        assert!(
+            rel < 0.02,
+            "DFT {numeric:.6e} vs quadrature {quadrature:.6e} (rel {rel:.4})"
         );
     }
 

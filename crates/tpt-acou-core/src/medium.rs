@@ -14,6 +14,7 @@ use tpt_math_linalg_complex::Complex;
 /// A homogeneous, quiescent acoustic fluid (lossless except where an
 /// attenuation coefficient is supplied explicitly).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Medium {
     /// Density `rho` in kg/m³.
     pub density: f64,
@@ -125,6 +126,7 @@ impl Medium {
 
 /// A homogeneous, isotropic linear-elastic solid.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Solid {
     /// Density `rho` in kg/m³.
     pub density: f64,

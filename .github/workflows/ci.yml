@@ -105,6 +105,32 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --all-features --summary-only
 
+  semver:
+    # Public-API breaks against the pull request's base. Runs only on pull
+    # requests, because a push to master has no baseline to compare with.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          baseline-rev: ${{ github.event.pull_request.base.sha }}
+
+  bench:
+    # Runs the criterion benchmarks and keeps the report as an artifact. A
+    # regression gate needs a stored baseline, which is not set up yet.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo bench -p tpt-acou-ray --bench ray -- --noplot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report
+          path: target/criterion
+
   kani:
     runs-on: ubuntu-24.04
     steps:

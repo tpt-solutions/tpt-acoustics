@@ -1,0 +1,12 @@
+# release-plz configuration. See https://release-plz.dev/docs/config
+#
+# Publishing to crates.io is off. The crates depend on pinned git revisions of
+# the tpt-* sibling repositories, and crates.io rejects git dependencies. Releases
+# are tagged on GitHub, and the CHANGELOG is updated from commit history.
+
+[workspace]
+publish = false
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+semver_check = true

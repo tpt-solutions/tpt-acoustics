@@ -1,0 +1,22 @@
+[package]
+name = "tpt-acou-wasm"
+description = "WebAssembly bindings for tpt-acoustics: room, partition and psychoacoustic functions for JavaScript"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords = ["acoustics", "wasm", "reverberation"]
+categories = ["wasm", "science"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+tpt-acoustics = { path = "../tpt-acoustics", version = "1.0.0" }
+wasm-bindgen = "0.2"
+
+[lints]
+workspace = true

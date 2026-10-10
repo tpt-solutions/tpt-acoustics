@@ -13,6 +13,9 @@
 use std::process::ExitCode;
 
 mod study;
+mod wav;
+
+use tpt_acoustics::ray::design;
 
 use tpt_acoustics::core::medium::Medium;
 use tpt_acoustics::core::AcousticError;
@@ -30,7 +33,10 @@ const USAGE: &str = "usage:
   tpt-acou stc mass <kg_per_m2>
   tpt-acou stc tl <tl_1> ... <tl_16>
   tpt-acou weight <freq_hz>
-  tpt-acou study <file.toml>                     (see templates/room-study.toml)";
+  tpt-acou study <file.toml>                     (see templates/*.toml)
+  tpt-acou design rt60 <lx> <ly> <lz> <target_s>
+  tpt-acou uq rt60 <lx> <ly> <lz> <alpha_mean> <alpha_sd> <samples> <seed>
+  tpt-acou auralize <dry.wav> <rir.wav> <out.wav>";
 
 /// A usage problem (exit status 2) or a failed computation (exit status 1).
 #[derive(Debug, PartialEq)]
@@ -61,6 +67,9 @@ fn run(args: &[String]) -> Result<String, CliError> {
         Some("stc") => stc(&args[1..]),
         Some("weight") => weight(&args[1..]),
         Some("study") => study_file(&args[1..]),
+        Some("design") => design(&args[1..]),
+        Some("uq") => uq(&args[1..]),
+        Some("auralize") => auralize(&args[1..]),
         Some(other) => Err(CliError::Usage(format!("unknown command '{other}'"))),
         None => Err(CliError::Usage("no command given".into())),
     }
@@ -159,6 +168,101 @@ fn weight(args: &[String]) -> Result<String, CliError> {
         c_weighting_db(f),
         itu468_weighting_db(f),
     ))
+}
+
+fn room_dims(args: &[String]) -> Result<[f64; 3], CliError> {
+    Ok([
+        parse_number(&args[0], "length")?,
+        parse_number(&args[1], "width")?,
+        parse_number(&args[2], "height")?,
+    ])
+}
+
+/// `design rt60 <lx> <ly> <lz> <target_s>`: the uniform absorption that gives
+/// the target Sabine time, and a check of the result.
+fn design(args: &[String]) -> Result<String, CliError> {
+    match args.first().map(String::as_str) {
+        Some("rt60") if args.len() == 5 => {
+            let dims = room_dims(&args[1..4])?;
+            let target = parse_number(&args[4], "target T60")?;
+            let alpha = design::absorption_for_rt60(dims, target).map_err(compute)?;
+            let (check, _, _) = design::sabine_with_gradient(dims, [alpha; 6]).map_err(compute)?;
+            Ok(format!(
+                "uniform absorption : {alpha:.4}\nsabine T60 check  : {check:.4} s (target {target:.3} s)\n"
+            ))
+        }
+        _ => Err(CliError::Usage(
+            "design takes 'rt60 <lx> <ly> <lz> <target_s>'".into(),
+        )),
+    }
+}
+
+/// `uq rt60 <lx> <ly> <lz> <alpha_mean> <alpha_sd> <samples> <seed>`.
+fn uq(args: &[String]) -> Result<String, CliError> {
+    match args.first().map(String::as_str) {
+        Some("rt60") if args.len() == 8 => {
+            let dims = room_dims(&args[1..4])?;
+            let mean = parse_number(&args[4], "alpha_mean")?;
+            let sd = parse_number(&args[5], "alpha_sd")?;
+            let samples: usize = args[6]
+                .parse()
+                .map_err(|_| CliError::Usage("samples must be a whole number".into()))?;
+            let seed: u64 = args[7]
+                .parse()
+                .map_err(|_| CliError::Usage("seed must be a whole number".into()))?;
+            let u = design::rt60_uncertainty(dims, mean, sd, samples, seed).map_err(compute)?;
+            Ok(format!(
+                "sabine T60 mean   : {:.4} s\nsabine T60 std    : {:.4} s\n5th percentile    : {:.4} s\n95th percentile   : {:.4} s\n",
+                u.mean_s, u.std_s, u.p05_s, u.p95_s
+            ))
+        }
+        _ => Err(CliError::Usage(
+            "uq takes 'rt60 <lx> <ly> <lz> <alpha_mean> <alpha_sd> <samples> <seed>'".into(),
+        )),
+    }
+}
+
+/// `auralize <dry.wav> <rir.wav> <out.wav>`: convolves the dry signal with the
+/// impulse response and writes a float WAV, scaled to a peak of 0.99 if the
+/// result would clip.
+fn auralize(args: &[String]) -> Result<String, CliError> {
+    if args.len() != 3 {
+        return Err(CliError::Usage(
+            "auralize takes <dry.wav> <rir.wav> <out.wav>".into(),
+        ));
+    }
+    let read = |path: &String| -> Result<wav::WavData, CliError> {
+        let bytes = std::fs::read(path)
+            .map_err(|e| CliError::Usage(format!("cannot read '{path}': {e}")))?;
+        wav::parse_wav(&bytes).map_err(|e| CliError::Usage(format!("'{path}': {e}")))
+    };
+    let dry = read(&args[0])?;
+    let rir = read(&args[1])?;
+    if dry.sample_rate != rir.sample_rate {
+        return Err(CliError::Usage(format!(
+            "sample rates differ: {} Hz dry, {} Hz RIR",
+            dry.sample_rate, rir.sample_rate
+        )));
+    }
+    let mut out = auralize_signal(&dry.samples, &rir.samples);
+    let peak = out.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
+    let gain = if peak > 0.99 { 0.99 / peak } else { 1.0 };
+    for v in &mut out {
+        *v *= gain;
+    }
+    let bytes = tpt_acoustics::ray::rir::write_wav_f32(&out, dry.sample_rate);
+    std::fs::write(&args[2], bytes)
+        .map_err(|e| CliError::Usage(format!("cannot write '{}': {e}", args[2])))?;
+    Ok(format!(
+        "wrote {} samples at {} Hz to {} (gain {gain:.3})\n",
+        out.len(),
+        dry.sample_rate,
+        args[2]
+    ))
+}
+
+fn auralize_signal(dry: &[f64], rir: &[f64]) -> Vec<f64> {
+    tpt_acoustics::ray::rir::auralize(dry, rir)
 }
 
 fn study_file(args: &[String]) -> Result<String, CliError> {

@@ -21,10 +21,12 @@ use tpt_acoustics::aero::fwh::{rotating_ring_pressure, Ambient};
 use tpt_acoustics::core::medium::Medium;
 use tpt_acoustics::core::{AcousticError, Vec3};
 use tpt_acoustics::ray::ism::{ShoeboxRoom, SPEED_OF_SOUND_REFERENCE};
-use tpt_acoustics::ray::iso3382::{clarity_db, definition, schroeder_frequency_hz};
+use tpt_acoustics::ray::iso3382::{clarity_db, definition, schroeder_frequency_hz, strength_db};
 use tpt_acoustics::ray::material::BoundaryMaterial;
 use tpt_acoustics::ray::ray::{rt60_from_curve, schroeder_curve, trace_shoebox, RayTracerConfig};
+use tpt_acoustics::ray::rir::hybrid_rir;
 use tpt_acoustics::ray::rir::rir_from_echogram;
+use tpt_acoustics::ray::sti::{sti_from_rir, STI_WEIGHTS_MALE};
 use tpt_acoustics::vibro::transmission::{
     mass_law_diffuse_tl, sound_transmission_class, STC_BAND_HZ,
 };
@@ -39,6 +41,24 @@ pub enum StudyConfig {
     Partition(PartitionStudy),
     /// Rotor blade-passing tone from the FW-H ring model.
     Rotor(RotorStudy),
+    /// Room and partition together, reported against their standards.
+    Compliance(ComplianceStudy),
+}
+
+/// Settings for a compliance study: a room, its analysis, and one partition.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ComplianceStudy {
+    /// The room (see the room study).
+    pub room: RoomSection,
+    /// Source position.
+    pub source: PointSection,
+    /// Receiver position.
+    pub receiver: PointSection,
+    /// Room analysis settings.
+    pub analysis: RoomAnalysis,
+    /// Partition rated for STC.
+    pub partition: PartitionSection,
 }
 
 /// Settings for a room study.
@@ -61,8 +81,36 @@ pub struct RoomStudy {
 pub struct RoomSection {
     /// Length, width and height in metres.
     pub dimensions: [f64; 3],
-    /// Uniform absorption coefficient of all six walls, in [0, 1].
-    pub absorption: f64,
+    /// Uniform absorption coefficient of all six walls, in [0, 1]. Give this
+    /// or `finish`, not both.
+    pub absorption: Option<f64>,
+    /// Name of an octave-band finish from the absorption database (for
+    /// example `carpet_on_concrete`). Give this or `absorption`, not both.
+    pub finish: Option<String>,
+}
+
+/// Wall material and a label for the report, from `absorption` or `finish`.
+fn room_material(section: &RoomSection) -> Result<(BoundaryMaterial, String), AcousticError> {
+    match (section.absorption, section.finish.as_deref()) {
+        (Some(alpha), None) => {
+            if !(0.0..=1.0).contains(&alpha) {
+                return Err(AcousticError::InvalidArgument(
+                    "absorption must lie in [0, 1]",
+                ));
+            }
+            let material = BoundaryMaterial::new("study", flat_table(alpha), flat_table(0.0))?;
+            Ok((material, format!("{alpha:.3}")))
+        }
+        (None, Some(name)) => {
+            let finish = tpt_acoustics::ray::database::lookup(name).ok_or(
+                AcousticError::InvalidArgument("unknown finish; see tpt_acou_ray::database"),
+            )?;
+            Ok((finish.to_material(), name.to_string()))
+        }
+        _ => Err(AcousticError::InvalidArgument(
+            "give exactly one of 'absorption' or 'finish' in [room]",
+        )),
+    }
 }
 
 /// A position in metres.
@@ -160,18 +208,13 @@ pub fn run_study(config: &StudyConfig) -> Result<String, AcousticError> {
         StudyConfig::Room(s) => run_room(s),
         StudyConfig::Partition(s) => run_partition(s),
         StudyConfig::Rotor(s) => run_rotor(s),
+        StudyConfig::Compliance(s) => run_compliance(s),
     }
 }
 
 fn run_room(config: &RoomStudy) -> Result<String, AcousticError> {
     let a = &config.analysis;
-    if !(0.0..=1.0).contains(&config.room.absorption) {
-        return Err(AcousticError::InvalidArgument(
-            "absorption must lie in [0, 1]",
-        ));
-    }
-    let material =
-        BoundaryMaterial::new("study", flat_table(config.room.absorption), flat_table(0.0))?;
+    let (material, absorption_label) = room_material(&config.room)?;
     let room = ShoeboxRoom::uniform(config.room.dimensions, material)?;
     let src = vec3(config.source.position);
     let rcv = vec3(config.receiver.position);
@@ -198,16 +241,29 @@ fn run_room(config: &RoomStudy) -> Result<String, AcousticError> {
     let rir = rir_from_echogram(&echogram, fs, a.seed)?;
     let c80 = clarity_db(&rir, fs, 80.0);
     let d50 = definition(&rir, fs, 50.0);
+    let g = strength_db(&echogram);
+    // STI from the hybrid RIR (image sources early, ray tail late). If the
+    // tracer captured no energy in the calibration window, use image sources.
+    let (sti_rir, sti_source) = match hybrid_rir(
+        &echogram,
+        &traced.detected_times,
+        &traced.detected_energies,
+        fs,
+        0.08,
+        0.01,
+        a.seed,
+    ) {
+        Ok(h) => (h.samples, "hybrid ISM/ray RIR"),
+        Err(_) => (rir.clone(), "image sources only"),
+    };
+    let sti = sti_from_rir(&sti_rir, fs, &STI_WEIGHTS_MALE)?;
 
     let mut out = String::new();
     out.push_str(&format!(
         "room             : {:.2} x {:.2} x {:.2} m\n",
         config.room.dimensions[0], config.room.dimensions[1], config.room.dimensions[2]
     ));
-    out.push_str(&format!(
-        "absorption       : {:.3}\n",
-        config.room.absorption
-    ));
+    out.push_str(&format!("absorption       : {absorption_label}\n"));
     out.push_str(&format!("frequency        : {:.0} Hz\n", a.frequency_hz));
     out.push_str(&format!("direct distance  : {:.3} m\n", src.distance(rcv)));
     out.push_str(&format!("sabine T60       : {sabine:.3} s\n"));
@@ -236,6 +292,50 @@ fn run_room(config: &RoomStudy) -> Result<String, AcousticError> {
         Some(d) => out.push_str(&format!("D50              : {d:.3}\n")),
         None => out.push_str("D50              : undefined\n"),
     }
+    match g {
+        Some(v) => out.push_str(&format!(
+            "G (strength)     : {v:.2} dB re 10 m free field\n"
+        )),
+        None => out.push_str("G (strength)     : undefined\n"),
+    }
+    out.push_str(&format!("STI (male)       : {sti:.3} ({sti_source})\n"));
+    Ok(out)
+}
+
+/// Room and partition results under their standard headings. The report
+/// states which requested ratings are not implemented.
+fn run_compliance(config: &ComplianceStudy) -> Result<String, AcousticError> {
+    let room = RoomStudy {
+        room: RoomSection {
+            dimensions: config.room.dimensions,
+            absorption: config.room.absorption,
+            finish: config.room.finish.clone(),
+        },
+        source: PointSection {
+            position: config.source.position,
+        },
+        receiver: PointSection {
+            position: config.receiver.position,
+        },
+        analysis: RoomAnalysis {
+            frequency_hz: config.analysis.frequency_hz,
+            rays: config.analysis.rays,
+            max_order: config.analysis.max_order,
+            seed: config.analysis.seed,
+        },
+    };
+    let partition = PartitionStudy {
+        partition: PartitionSection {
+            surface_mass: config.partition.surface_mass,
+        },
+    };
+    let mut out = String::from("== ISO 3382-1 and IEC 60268-16 (room) ==\n");
+    out.push_str(&run_room(&room)?);
+    out.push_str("\n== ASTM E413 (partition) ==\n");
+    out.push_str(&run_partition(&partition)?);
+    out.push_str("\n== not reported ==\n");
+    out.push_str("OITC (ASTM E1332): not implemented; the reference contour table is incomplete\n");
+    out.push_str("Lw (ISO 3741 and 3744): needs measured source data, not a model input\n");
     Ok(out)
 }
 
@@ -432,6 +532,8 @@ start_s = 0.5
             "schroeder freq",
             "C80",
             "D50",
+            "G (strength)",
+            "STI (male)",
         ] {
             assert!(out.contains(key), "missing {key}:\n{out}");
         }
@@ -488,12 +590,51 @@ start_s = 0.5
     }
 
     #[test]
+    fn compliance_report_names_each_standard_and_the_gaps() {
+        let text = std::fs::read_to_string("../../templates/compliance-study.toml").unwrap();
+        let out = run_study(&parse_study(&text).unwrap()).unwrap();
+        for key in [
+            "ISO 3382-1",
+            "ASTM E413",
+            "STI (male)",
+            "STC",
+            "OITC (ASTM E1332): not implemented",
+        ] {
+            assert!(out.contains(key), "missing {key}:\n{out}");
+        }
+    }
+
+    #[test]
+    fn a_named_finish_replaces_the_flat_absorption() {
+        let text = ROOM.replace("absorption = 0.15", "finish = \"carpet_on_concrete\"");
+        let out = report(&text);
+        assert!(
+            out.contains("absorption       : carpet_on_concrete"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn absorption_and_finish_are_mutually_exclusive() {
+        let both = ROOM.replace(
+            "absorption = 0.15",
+            "absorption = 0.15\nfinish = \"carpet_on_concrete\"",
+        );
+        let cfg = parse_study(&both).unwrap();
+        assert!(run_study(&cfg).is_err());
+        let neither = ROOM.replace("absorption = 0.15\n", "");
+        assert!(run_study(&parse_study(&neither).unwrap()).is_err());
+        let unknown = ROOM.replace("absorption = 0.15", "finish = \"unobtainium\"");
+        assert!(run_study(&parse_study(&unknown).unwrap()).is_err());
+    }
+
+    #[test]
     fn invalid_values_are_rejected() {
         let mut cfg = match parse_study(ROOM).unwrap() {
             StudyConfig::Room(r) => r,
             _ => unreachable!(),
         };
-        cfg.room.absorption = 2.0;
+        cfg.room.absorption = Some(2.0);
         assert!(run_study(&StudyConfig::Room(cfg)).is_err());
         let bad_mass = PARTITION.replace("surface_mass = 5.0", "surface_mass = -1.0");
         assert!(run_study(&parse_study(&bad_mass).unwrap()).is_err());

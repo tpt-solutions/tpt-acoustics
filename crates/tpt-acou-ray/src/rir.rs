@@ -165,6 +165,15 @@ pub fn hybrid_rir(
     Ok(HybridRir { samples, tail_gain })
 }
 
+/// Auralization: the dry signal convolved with a room impulse response, via
+/// the FFT. The output has `dry.len() + rir.len() − 1` samples (empty if
+/// either input is empty). The output is not normalised; scale it before
+/// playback if its peak matters.
+#[must_use]
+pub fn auralize(dry: &[f64], rir: &[f64]) -> Vec<f64> {
+    crate::fft::convolve_real(dry, rir)
+}
+
 /// Serialises `samples` (nominally in `[-1, 1]`) as a mono 32-bit float WAV
 /// file at `sample_rate_hz`. Values are written as-is; the caller is
 /// responsible for scaling.
@@ -259,6 +268,18 @@ mod tests {
         assert!(hybrid_rir(&echo, &[0.05], &[], 1000.0, 0.05, 0.01, 1).is_err());
         // Non-positive window.
         assert!(hybrid_rir(&echo, &[0.05], &[0.1], 1000.0, 0.05, 0.0, 1).is_err());
+    }
+
+    #[test]
+    fn auralization_with_a_delta_returns_the_dry_signal_delayed() {
+        let dry = [0.5, -1.0, 0.25];
+        let rir = [0.0, 0.0, 1.0];
+        let wet = auralize(&dry, &rir);
+        assert_eq!(wet.len(), 5);
+        let expected = [0.0, 0.0, 0.5, -1.0, 0.25];
+        for (g, e) in wet.iter().zip(expected) {
+            assert!((g - e).abs() < 1e-12, "{wet:?}");
+        }
     }
 
     #[test]

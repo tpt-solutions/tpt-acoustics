@@ -32,11 +32,14 @@
 //! ITU-R BS.468-4 (log-frequency piecewise-linear interpolation; the standard
 //! curve peaks at +12.2 dB at 6.3 kHz).
 //!
-//! **Verification status:** the 3.15, 4, 5, 6.3, 8, 10 and 12.5 kHz points were
-//! taken from published secondary tables (mirrors of the Wikipedia article),
-//! which agree with each other and with the +12.2 dB peak at 6.3 kHz. They are
-//! not yet checked against the BS.468-4 text itself, and the 31.5 Hz–2.5 kHz
-//! and 14–20 kHz points were not confirmed at all.
+//! **Verification status:** the response column of the table is taken from the
+//! official ITU-R BS.468-4 recommendation PDF (ITU-R, 1986, 4th revision,
+//! https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.468-4-198607-I!!PDF-E.pdf).
+//! The values were read from text extraction of that PDF, so a visual check
+//! against the printed table is still worth doing before a compliance claim.
+//!
+//! **Quasi-peak detection is not implemented.** This module weights spectra
+//! only; the BS.468 quasi-peak rectifier and its tone-burst tests are absent.
 
 use tpt_acou_core::error::AcousticError;
 
@@ -75,10 +78,11 @@ pub fn c_weighting_db(f: f64) -> f64 {
     20.0 * libm::log10(rc) + 0.062
 }
 
-/// Nominal ITU-R BS.468-4 response table: `(frequency_hz, gain_db)` pairs
-/// from Recommendation ITU-R BS.468-4 (table reproduced from the public
-/// nominal values; the standard specifies tolerances around these).
-pub const ITU468_TABLE_DB: [(f64, f64); 18] = [
+/// Nominal ITU-R BS.468-4 response table: `(frequency_hz, gain_db)` pairs,
+/// the response column of Table 1 of Recommendation ITU-R BS.468-4 at its 20
+/// tabulated frequencies. The standard's tolerance column (±0.2 to ±2 dB) is
+/// not applied here.
+pub const ITU468_TABLE_DB: [(f64, f64); 20] = [
     (31.5, -29.9),
     (63.0, -23.9),
     (100.0, -19.8),
@@ -87,14 +91,16 @@ pub const ITU468_TABLE_DB: [(f64, f64); 18] = [
     (800.0, -1.9),
     (1000.0, 0.0),
     (2000.0, 5.6),
-    (3150.0, 9.0), // secondary sources; unverified against BS.468-4 text
+    (3150.0, 9.0),
     (4000.0, 10.5),
-    (5000.0, 11.7), // secondary sources; unverified against BS.468-4 text
+    (5000.0, 11.7),
     (6300.0, 12.2),
+    (7100.0, 12.0),
     (8000.0, 11.4),
-    (10000.0, 8.1), // secondary sources; unverified against BS.468-4 text
+    (9000.0, 10.1),
+    (10000.0, 8.1),
     (12500.0, 0.0),
-    (14000.0, -5.4),
+    (14000.0, -5.3),
     (16000.0, -11.7),
     (20000.0, -22.2),
 ];

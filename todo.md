@@ -221,95 +221,128 @@ Applied to every crate below (referenced by name, not repeated per crate):
 
 ## Phase 4 — Review Follow-ups (platform review, 2026-10-11)
 
-> Source: platform review of v1.0. Items marked *(verify)* were found by reading the code plus
-> domain knowledge and need confirming against the cited standard before changing. Full write-up:
-> the review plan (bugs A, gaps B, ideas C, adoption D).
+> Source: platform review of v1.0. Status reflects the code as of the last commit plus the uncommitted
+> work in this round. "Validated" means a test checks the result against a closed form, an independent
+> numerical method, or a cited value. Items marked *(blocked)* need a source the repository does not have;
+> they are listed under "Blockers" at the end of this phase.
 
 ### 4.1 Build & CI (do first)
-- [x] Make the workspace build from a clean clone: the sibling path deps are now git deps pinned by
-      `rev` to `tpt-math`, `tpt-fem`, `tpt-dsp` and `tpt-materials` on GitHub (`Cargo.toml`), and
-      `deny.toml` allows those git sources. Pinned to the committed `HEAD` of each sibling. Note:
-      `tpt-dsp` has uncommitted lint-only edits locally, which are not in the pinned revision.
-- [x] Clean-clone verification: copied the project (without `target/` or `.git/`) to an empty directory
-      with no sibling checkouts and ran `cargo build --workspace`, which succeeds. This copied the working
-      tree, not a fresh `git clone`; that needs this change committed first.
-- [x] Make `verify` opt-in on the umbrella crate (removed from `default`; `proptest` only with `verify`)
-- [x] Reconsider `MPL-2.0` in `deny.toml` allow-list vs the MIT/Apache-only philosophy in spec.txt
-      (removed: no crate in the graph uses it, and `cargo deny check licenses` still passes)
-- [x] `no_std` CI: cover remaining crates where applicable. Reviewed: spec.txt only requires no_std
-      for the core layer, and CI already builds the five crates that declare `#![no_std]`. `tpt-acou-vibro`
-      is std-only and `tpt-acou-verify` depends on `proptest` (std), so neither is added.
+- [x] Clean-clone build: sibling path deps are pinned git revisions (`Cargo.toml`), and `deny.toml` allows
+      those git sources. Verified by building a copy with no sibling checkouts. Not yet verified by a real
+      `git clone`, which needs this work committed.
+- [x] `verify` is opt-in on the umbrella crate (removed from `default`).
+- [x] `MPL-2.0` removed from the `deny.toml` allow-list (unused).
+- [x] `no_std` CI covers every crate that declares `#![no_std]`, plus a wasm32 build. `vibro` (std-only) and
+      `verify` (proptest) are out of scope per spec.txt.
+- [ ] CI jobs not yet run on GitHub: macOS, MSRV, coverage, semver, bench artifact, wasm, release-plz.
 
 ### 4.2 Correctness bugs
-- [x] **STC contour wrong** (`tpt-acou-vibro/src/transmission.rs`): replaced with the ASTM E413
-      contour (`STC_CONTOUR_REL_DB`); tests are analytic (the contour itself rates 52, flat 60 dB
-      rates 60). Not yet checked against a published STC worked example.
-- [ ] **ITU-R 468 table** (`tpt-acou-psycho/src/weighting.rs`) *(partly done)*: 3.15 kHz (+9.0),
-      4 kHz (+10.5), 5 kHz (+11.7), 6.3 kHz (+12.2, the peak), 8 kHz (+11.4) and 10 kHz (+8.1) taken
-      from secondary mirrors of the Wikipedia article, which agree with each other. **Still open:**
-      confirm all points against the BS.468-4 text, since 31.5 Hz–2.5 kHz and 12.5–20 kHz are
-      unconfirmed. Quasi-peak detector not addressed.
-- [ ] **Moore loudness** — unticked in Phase 2 (not implemented). **Decision:** deferred. Moore–Glasberg needs either the ISO 532-2 tables (licensed) or the published 1996 and 2007 formulas, and the choice of reference must be made first. Implement only with a cited formula and its test values.
-- [x] `zwicker_stationary`: spectral spreading added (Zwicker's 27 dB/Bark lower slope and
-      level-dependent upper slope). A 1 kHz / 40 dB tone now rates 1.02 sone against 1 sone in
-      ISO 532-1; tests pin it within 5 %. Negative SPL allowed, Terhardt wording fixed. The model
-      is still a simplified approximation, not a certified ISO 532-1 implementation.
-- [x] **Ray tracer** (`tpt-acou-ray/src/ray.rs`): particles keep tracing after capture; detections
-      are a separate tally and the partition is `injected = absorbed + remaining`. RT60 test
-      tightened from 35% to 10% and passes.
-- [x] Ray tracer input validation: `RayTracerConfig::validate`, source and receiver inside the room
-      for shoebox tracing; `trace_shoebox` and `trace_scene` return `Result`.
-- [x] **FW-H** (`tpt-acou-aero/src/fwh.rs`): `rotating_ring_pressure` now includes the `1/(1-M_r)`
-      factor with the emission-time blade velocity; `omega = 0` returns 0; `rotating_monopole_ring`
-      dropped its unused `omega` parameter (static snapshot, **semver-breaking**); monopole, dipole
-      and ring derivatives are central differences; `a = 0` and `1 - M_r <= 0` return NaN.
-      Still open: an analytic rotor-noise benchmark (no published reference is wired in yet).
-- [x] `b_weighting_db` doc says +1.96 dB, matching the code.
-- [x] `ShoeboxRoom::echogram` takes a `&Medium` and uses its speed of sound (no more hard-coded 343).
-- [x] `SoundPressureLevel::try_from_pressure_rms` / `try_from_intensity` / `try_from_power` return
-      `Result`; the panicking constructors are unchanged.
-- [x] Umbrella crate doc example: removed unused `core` import and unused `rcv`.
-- [x] Confirm what the ticked CFL Kani harness proves: it checks only that the float `c·dt/dx <= 1`
-      test agrees with the integer rational bound. It exercises no solver; there is no time-domain
-      solver in the workspace, so it is a classification lemma, not a stability proof of a scheme.
+- [x] **STC contour** (`tpt-acou-vibro/src/transmission.rs`): ASTM E413 shape, analytic tests.
+- [ ] **STC worked example** from the published standard. *(blocked)*
+- [ ] **ITU-R 468 table** (`tpt-acou-psycho/src/weighting.rs`): the 20 response values come from the official
+      BS.468-4 PDF (read via search, not by eye). Still open: a visual check against the printed table. The
+      tolerance column is not applied. *(blocked: printed-table check)*
+- [ ] **Quasi-peak detector** (BS.468): not implemented. Its charge and discharge constants are normative, and no
+      official source was found. The only fitted values found were one implementer's, and they are not used.
+      *(blocked: normative constants)*
+- [x] **Moore–Glasberg loudness** (`tpt-acou-psycho/src/loudness_moore.rs`): implemented from the published
+      model structure (ERB filters, absolute threshold, compressive specific loudness), anchored so that 1 kHz at
+      40 dB is 1 sone. Tested for the anchor, monotonicity, masking and the ERB scale. **Not validated** against
+      ISO 532-2 reference values (licensed). Outer/middle-ear and temporal effects are not modelled.
+- [x] `zwicker_stationary`: spectral spreading added. 1 kHz at 40 dB gives 1.02 sone (test pins it to 5%).
+- [x] **Ray tracer**: particles keep tracing after capture; partition `injected = absorbed + remaining`; RT60 test
+      at 10%. Per-ray seeding; the `parallel` feature gives identical output.
+- [x] Ray tracer input validation (`RayTracerConfig::validate`, positions inside the room).
+- [x] **FW-H** (`tpt-acou-aero/src/fwh.rs`): `1/(1−M_r)` factor; `omega = 0` returns 0; NaN where the far field is
+      undefined; central differences with a step scaled to the blade-passing frequency. The previous step left the
+      BPF harmonic about 10% low. **Validated** against an independent retarded-time quadrature of the thickness
+      integral (`ring_bpf_matches_the_retarded_time_quadrature`, 2%). The Garrick–Watkins reference (NACA TN 3018)
+      covers rotor *loading*, not thickness, so it is not the right reference for this model.
+- [x] `b_weighting_db` doc matches the code (+1.96 dB).
+- [x] `ShoeboxRoom::echogram` takes a `&Medium`.
+- [x] `SoundPressureLevel::try_from_*` constructors.
+- [x] Umbrella crate doc example cleaned up.
+- [x] CFL Kani harness scope documented: a classification lemma, not a stability proof (no time-domain solver).
 
 ### 4.3 Missing features vs spec
-- [ ] GMRES (iterative) solver in `tpt-acou-wave` consuming the FMM matvec, with a preconditioner *(partly done)*: `tpt_acou_wave::krylov::gmres` is restarted, right-preconditioned complex GMRES over any matvec closure, with a Jacobi option. It matches the dense BEM exterior solve. **Decision:** not wired to the FMM. The exterior Neumann solve uses the adjoint double-layer operator `K′`, and the existing FMM evaluates only the single-layer potential, so it cannot supply that matvec. A double-layer FMM (a multipole expansion of `∂G/∂n`) is the prerequisite. Recommended as its own piece of work.
-- [ ] ISM with wall phase / complex impedance (low-frequency / modal behaviour)
-- [ ] Multi-parameter differentiable ray/ISM gradients (dimensions, per-band absorption,
-      source/receiver position); evaluate `tpt-math-autodiff` / reverse mode
-- [x] Room impulse response from echogram (`tpt_acou_ray::rir::rir_from_echogram`, energy-correct, not phase-correct) and the ISM–ray hybrid (`rir::hybrid_rir`). **Decision:** the ISM and ray energies are on different scales, so the ray tail is calibrated to the ISM energy in a window around the crossover. The gain is returned, and the calibration is continuous at the join. It is an energy match, not a derivation from first principles.
-- [ ] Optional `serde` support, `rayon` parallel feature (ray tracing, BEM assembly) *(wasm32 CI target added: `no_std` crates build for `wasm32-unknown-unknown`)*. **Decision:** `rayon` is deferred, because a parallel ray tracer changes the RNG stream and needs per-ray seeding first. `serde` is deferred until a caller needs it.
-- [x] criterion benchmarks (`crates/tpt-acou-ray/benches/ray.rs`: ray tracer, echogram, RIR). **Still open:** regression tracking (baseline storage and comparison in CI).
+- [x] **GMRES** (`tpt_acou_wave::krylov`): restarted, right-preconditioned, complex. Matches the dense BEM solve.
+- [x] **FMM-backed Neumann solve**: the adjoint double-layer operator `K′` applied through the single-level FMM
+      (field-side normal derivative of the expansion, 6-radius far criterion), and `solve_exterior_neumann_fmm`.
+      Validated against the dense operator and the dense solve, both to a 1e-3 relative bound (`fmm::tests`,
+      feature `fmm`). Interior Neumann and Dirichlet solves are not wired to the FMM.
+- [x] **ISM with complex impedance** (`ShoeboxRoom::transfer_function_impedance`): locally reacting oblique
+      reflection from the unfolded image path. Validated: stiff walls reproduce the rigid room. A matched wall is not
+      perfectly absorbing at oblique incidence (stated in the docs).
+- [ ] **Multi-parameter gradients of ray and ISM energy** (per-band absorption, source and receiver position). The
+      Sabine time has exact gradients in room dimensions and per-wall absorption (`design::sabine_with_gradient`,
+      finite-difference checked). The ISM energy gradient is still only with respect to one room length.
+- [x] **Room impulse response** from the echogram (`rir_from_echogram`); **hybrid ISM–ray RIR** (`hybrid_rir`, tail
+      calibrated to the ISM energy at the crossover, gain returned); **broadband hybrid** (modal below the Schroeder
+      frequency, image sources above: `broadband::hybrid_broadband_ir`, checked against the two transfer functions in
+      their bands).
+- [ ] **Three-way hybrid** (ISM early, ray late, modal low frequency in one response). The pairs exist; the joint
+      construction does not.
+- [x] **Rigid-box modal transfer** (`modal::RigidBoxModes`): reciprocity exact; resonance location and damping
+      checked. The image sum is not used as a reference, because it is only conditionally convergent for lossless
+      rigid rooms.
+- [x] **serde** (`tpt-acou-core`, `serde` feature; JSON round-trip test). `Medium` and `Solid` serialise only, so
+      validation cannot be bypassed on read.
+- [x] **rayon** (`tpt-acou-ray`, `parallel` feature). Per-ray seeds make the output independent of threads.
+- [x] **criterion benchmarks** (`crates/tpt-acou-ray/benches/ray.rs`), and a CI job that keeps the report.
+- [ ] **Benchmark regression gate**: needs a stored baseline and a comparison step. Not set up.
 
 ### 4.4 New features (innovation)
-- [x] ISO 3382 room metrics from an RIR: T20/T30/EDT, C50/C80, D50 (`tpt_acou_ray::iso3382`).
-      Analytic tests on an exponential decay. **Still open:** STI and G.
-- [x] RIR export to WAV (`tpt_acou_ray::rir::write_wav_f32`, 32-bit float mono). **Still open:**
-      convolution-based auralization.
-- [ ] Differentiable inverse design: fit room to target RT60/C80; optimize panel absorption
-- [ ] Hybrid broadband RIR: ISM early + rays late *(done, see the RIR item above)*; the wave low-frequency band and the crossover at the Schroeder frequency are still open. **Decision:** the wave part needs a band-limited BEM/FEM response and is deferred until one is wanted for a concrete study.
-- [x] STL import (`tpt_acou_ray::stl`, ASCII and binary, detected by size) and OBJ import (`tpt_acou_ray::obj`: vertices, polygon faces, slash and negative indices, `usemtl` groups; one material per scene). **Still open:** an octave-band material database (ISO 354 style). **Decision:** deferred until a cited data source is chosen. Made-up absorption values would be worse than none.
-- [ ] Standards compliance report (TL, STC, OITC, Lw, ISO 3382, ISO 532). **Decision:** deferred. It needs OITC, STI and G, which are not implemented, and a report that cites a standard only makes sense once those values can be checked.
-- [ ] Uncertainty quantification via seeded Monte Carlo over material uncertainty
-- [ ] Python (PyO3) and WASM bindings
+- [x] **ISO 3382 metrics** from an RIR: T20, T30, EDT, C50, C80, D50 (closed-form tests), and **sound strength G**
+      (free-field reference at 10 m; tested at 0 dB and +6.02 dB).
+- [x] **Speech Transmission Index** (`tpt_acou_ray::sti`): octave bands, 14 modulation frequencies, IEC 60268-16
+      structure. Validated against the closed-form index for an exponential noise tail (within 0.03). The male and
+      female weights come from a secondary source; both sets sum to exactly 1 with their redundancy terms (checked).
+      Not confirmed against the IEC edition. Octave filtering is rectangular in frequency, not the standard's
+      band-pass filters. *(blocked: IEC table check)*
+- [x] **RIR export** to float WAV, and **auralization** by FFT convolution (`rir::auralize`, CLI `auralize`).
+- [x] **Differentiable inverse design** (`design`): closed-form uniform absorption for a target T60, layout-preserving
+      scaling, analytic gradients. Not done: fitting a target C80, or per-panel optimisation against ray or ISM energy.
+- [x] **Uncertainty quantification** (`design::rt60_uncertainty`, seeded Monte Carlo over per-wall absorption; CLI
+      `uq`). Covers absorption uncertainty only, not geometry or source uncertainty.
+- [x] **STL and OBJ import** (`tpt_acou_ray::stl`, `tpt_acou_ray::obj`). One material per scene; per-`usemtl`
+      material assignment is not done.
+- [x] **Octave-band absorption database** (`tpt_acou_ray::database`): three finishes, each taken from one named
+      vendor chart, with the chart named in the data. Not a complete ISO 354 database. *(blocked: a cited, complete
+      data source)*
+- [ ] **Standards compliance report**: the `compliance` study kind reports ISO 3382-1, IEC 60268-16 and ASTM E413
+      results, and lists what it does not report. Still missing: OITC (ASTM E1332 reference table, *blocked*) and Lw
+      (needs measured source data, ISO 3741).
+- [x] **Python bindings** (`bindings/python`, PyO3): `cargo check` passes. Not built into a wheel or imported here
+      (needs a Python environment and `maturin`).
+- [x] **WASM bindings** (`crates/tpt-acou-wasm`): native tests pass, and the wasm32 build succeeds.
 
 ### 4.5 Adoption: examples, docs, templates
-- [x] `examples/` in `crates/tpt-acoustics/examples/`: `shoebox_rt60`, `room_impulse_response`,
-      `partition_stc`, `sphere_radiation_bem`, `fan_noise_fwh`, `optimize_room_gradient`,
-      `loudness_a_weighting`, `spatial_audio_vbap`. Each asserts against an analytic or literature
-      value. Listed in the README.
-- [x] `tpt_acoustics::prelude` + `RoomBuilder` / `Simulation` builder API (`crates/tpt-acoustics/src/builder.rs`).
-      The builder validates dimensions, source and receiver once; `Simulation` gives the echogram,
-      impulse response and Sabine T60. Still open: a `Simulation` path to ray-traced T30 and the wave solvers.
-- [ ] README: quick start, does/doesn't table and per-crate validation status are done; badges still open.
-- [x] Cookbook as one page (`docs/cookbook.md`): solver-choice table, units and conventions, glossary, recipes. **Still open:** the mdBook layout around it.
-- [x] Validation page (`docs/validation.md`): every reference with its tolerance and test name. Open items are listed on the page.
-- [x] Templates: room, partition and rotor studies in `templates/`, run with `tpt-acou study <file>` (each file has a `kind`). Mass-law partitions and the FW-H rotor are the models behind them.
-- [x] `tpt-acou-cli` crate (`crates/tpt-acou-cli`, binary `tpt-acou`): `rt60`, `stc` (mass or 16 TL values), `weight` and `study <file.toml>` subcommands, with exit status 2 for usage errors and 1 for failed computations.
+- [x] **Examples**: `shoebox_rt60`, `room_impulse_response`, `partition_stc`, `sphere_radiation_bem`, `fan_noise_fwh`,
+      `optimize_room_gradient`, `loudness_a_weighting`, `spatial_audio_vbap`. Each asserts against a reference.
+- [x] **Prelude, `RoomBuilder`, `Simulation`** (echogram, impulse response, ray-traced T30, STI, G).
+      [ ] A `Simulation` path to a wave solve.
+- [x] **README**: quick start, examples table, does/doesn't table, validation status, CI and licence badges.
+- [x] **Cookbook** (`docs/cookbook.md`) and **validation page** (`docs/validation.md`).
+- [x] **mdBook layout** (`book.toml`, `docs/SUMMARY.md`). Not built here (mdbook not installed).
+- [x] **Templates**: room, partition, rotor and compliance studies in `templates/`.
+- [x] **CLI** `tpt-acou`: `rt60`, `stc`, `weight`, `study`, `design`, `uq`, `auralize`.
 
 ### 4.6 Automation & hygiene
-- [x] Dependabot (`.github/dependabot.yml`, cargo + actions; Renovate not used). `cargo semver-checks`, `release-plz` + CHANGELOG.md still open
-- [x] Coverage job (`cargo llvm-cov --summary-only`), MSRV job (1.85, libraries), Windows + macOS test matrix *(added to CI; not yet run on GitHub, so the macOS and MSRV jobs are unverified)*
-- [ ] CI check that ticked todo items reference existing symbols (prevents the Moore-style drift)
-- [x] Issue and PR templates (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`)
+- [x] **Dependabot** (cargo and GitHub Actions).
+- [x] **Semver check** on pull requests (`cargo-semver-checks-action`). Needs a baseline; not run on GitHub.
+- [x] **release-plz** (`release-plz.toml`, workflow, `CHANGELOG.md`). `publish = false`, because the git dependencies
+      cannot be published to crates.io. Not run on GitHub.
+- [x] **Coverage** (`cargo llvm-cov --summary-only`), **MSRV** (1.85, libraries), **Windows and macOS** test matrix.
+      macOS and MSRV not yet run on GitHub.
+- [x] **Symbol check**: `crates/tpt-acoustics/tests/todo_symbols.rs` fails if a ticked item names code that does not
+      exist, or a file that is missing.
+- [x] **Issue and PR templates**.
+
+### Blockers (need a source the repository does not have)
+- **BS.468-4 printed table** (visual check), and the **quasi-peak constants** (normative).
+- **ASTM E1332 reference contour** (OITC): only 3 of 16 levels were found.
+- **ASTM E413 worked example** for the STC check.
+- **ISO 532-2 reference values** (licensed) for Moore–Glasberg.
+- **IEC 60268-16 weights**: confirm the edition and the male and female tables.
+- **Complete octave-band absorption data** (ISO 354 style), with a citable source for each value.
+- **A published rotor *thickness* benchmark**: the Garrick–Watkins results found cover loading, not thickness.
