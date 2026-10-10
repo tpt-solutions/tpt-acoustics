@@ -1,0 +1,12 @@
+# Partition study template for `tpt-acou study <file>`.
+#
+# A single leaf in air. The report gives the diffuse-field mass-law
+# transmission loss at the 16 STC bands (125 Hz to 4 kHz) and the ASTM E413
+# STC rating. This is mass-law only: it does not model coincidence, panel
+# resonances or double-leaf cavities.
+
+kind = "partition"
+
+[partition]
+# Surface mass in kg/m².
+surface_mass = 5.0

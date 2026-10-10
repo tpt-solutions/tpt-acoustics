@@ -74,6 +74,23 @@ from Sabine, the Schroeder frequency, and C80 and D50 from the image-source
 response. Copy `templates/room-study.toml` and edit the room, positions and
 analysis settings. Unknown keys are rejected.
 
+### Partition and rotor studies from files
+
+```sh
+tpt-acou study templates/partition-study.toml   # mass-law TL at the STC bands, STC
+tpt-acou study templates/rotor-study.toml       # FW-H blade-passing amplitude
+```
+
+Each file names its `kind`. The rotor study rejects a blade tip at or above
+Mach 1, where the far-field model is undefined, and it reports a zero
+half-harmonic as zero rather than as a ratio of noise.
+
+### Hybrid impulse response
+
+`tpt_acou_ray::rir::hybrid_rir` joins an image-source early part to a
+ray-traced late part. The ray tail is scaled so its energy in a window around
+the crossover matches the echogram. The gain is returned for inspection.
+
 ### Early reflections and clarity in code
 
 ```rust

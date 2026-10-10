@@ -59,6 +59,112 @@ pub fn rir_from_echogram(
     Ok(h)
 }
 
+/// Result of [`hybrid_rir`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct HybridRir {
+    /// The impulse response, sampled at the requested rate.
+    pub samples: Vec<f64>,
+    /// Gain applied to the ray tail. It equals the ISM energy in the
+    /// calibration window divided by the ray energy in the same window.
+    pub tail_gain: f64,
+}
+
+/// Hybrid impulse response: image-source early part, ray-traced late part.
+///
+/// The ISM echogram gives absolute energy weights, and the ray tracer gives
+/// energies normalised to the injected total, so the two cannot be joined
+/// without a common scale. This function uses the ISM energy as the
+/// reference: it measures both energies within `±window_s` of
+/// `crossover_s`, and scales the ray captures by the ratio of the two.
+/// Before the crossover the response comes from the echogram. From the
+/// crossover on it comes from the scaled ray captures. The energy level is
+/// therefore continuous at the join. The calibration is an energy match, not
+/// a physical derivation, and the gain is returned so callers can check it.
+///
+/// # Errors
+/// Returns [`AcousticError::InvalidArgument`] if `fs`, `crossover_s` or
+/// `window_s` is not positive and finite, if the ray time and energy slices
+/// differ in length, if any time or energy is negative or non-finite, or if
+/// no ray capture falls in the calibration window (no scale can be set).
+pub fn hybrid_rir(
+    echogram: &[(f64, f64)],
+    ray_times: &[f64],
+    ray_energies: &[f64],
+    fs: f64,
+    crossover_s: f64,
+    window_s: f64,
+    seed: u64,
+) -> Result<HybridRir, AcousticError> {
+    if !(fs.is_finite() && fs > 0.0) {
+        return Err(AcousticError::InvalidArgument("fs must be finite and > 0"));
+    }
+    if !(crossover_s.is_finite() && crossover_s > 0.0) {
+        return Err(AcousticError::InvalidArgument(
+            "crossover must be finite and > 0",
+        ));
+    }
+    if !(window_s.is_finite() && window_s > 0.0) {
+        return Err(AcousticError::InvalidArgument(
+            "window must be finite and > 0",
+        ));
+    }
+    if ray_times.len() != ray_energies.len() {
+        return Err(AcousticError::InvalidArgument(
+            "ray times and energies must have the same length",
+        ));
+    }
+    if echogram
+        .iter()
+        .any(|&(t, w)| !(t.is_finite() && t >= 0.0 && w.is_finite() && w >= 0.0))
+        || ray_times
+            .iter()
+            .zip(ray_energies)
+            .any(|(&t, &e)| !(t.is_finite() && t >= 0.0 && e.is_finite() && e >= 0.0))
+    {
+        return Err(AcousticError::InvalidArgument(
+            "times and energies must be finite and >= 0",
+        ));
+    }
+
+    let in_window = |t: f64| (t - crossover_s).abs() <= window_s;
+    let ism_energy: f64 = echogram
+        .iter()
+        .filter(|&&(t, _)| in_window(t))
+        .map(|&(_, w)| w)
+        .sum();
+    let ray_energy: f64 = ray_times
+        .iter()
+        .zip(ray_energies)
+        .filter(|&(&t, _)| in_window(t))
+        .map(|(_, &e)| e)
+        .sum();
+    if ray_energy <= 0.0 {
+        return Err(AcousticError::InvalidArgument(
+            "no ray energy in the calibration window; widen it or trace more rays",
+        ));
+    }
+    let tail_gain = ism_energy / ray_energy;
+
+    // Early part: echogram arrivals before the crossover.
+    let early: Vec<(f64, f64)> = echogram
+        .iter()
+        .copied()
+        .filter(|&(t, _)| t < crossover_s)
+        .collect();
+    // Late part: scaled ray captures from the crossover on.
+    let late: Vec<(f64, f64)> = ray_times
+        .iter()
+        .zip(ray_energies)
+        .filter(|&(&t, _)| t >= crossover_s)
+        .map(|(&t, &e)| (t, e * tail_gain))
+        .collect();
+
+    let mut combined = early;
+    combined.extend(late);
+    let samples = rir_from_echogram(&combined, fs, seed)?;
+    Ok(HybridRir { samples, tail_gain })
+}
+
 /// Serialises `samples` (nominally in `[-1, 1]`) as a mono 32-bit float WAV
 /// file at `sample_rate_hz`. Values are written as-is; the caller is
 /// responsible for scaling.
@@ -117,6 +223,42 @@ mod tests {
         assert!(rir_from_echogram(&[(0.1, 1.0)], 0.0, 0).is_err());
         assert!(rir_from_echogram(&[(-0.1, 1.0)], 1000.0, 0).is_err());
         assert!(rir_from_echogram(&[(0.1, -1.0)], 1000.0, 0).is_err());
+    }
+
+    #[test]
+    fn hybrid_tail_is_calibrated_to_the_echogram_at_the_crossover() {
+        let fs = 1000.0;
+        // ISM window (50 ms ± 10 ms) holds 0.4; the ray window holds 0.3.
+        let echo = [(0.010, 0.5), (0.045, 0.4)];
+        let rays_t = [0.052, 0.058, 0.200];
+        let rays_e = [0.1, 0.2, 0.05];
+        let hybrid = hybrid_rir(&echo, &rays_t, &rays_e, fs, 0.05, 0.01, 1).unwrap();
+        assert!(
+            (hybrid.tail_gain - 0.4 / 0.3).abs() < 1e-12,
+            "{}",
+            hybrid.tail_gain
+        );
+        // Post-crossover energy inside the window equals the ISM reference.
+        // Indices use the same rounding as `rir_from_echogram`.
+        let i0 = libm::round(0.052 * fs) as usize;
+        let i1 = libm::round(0.058 * fs) as usize;
+        let window_energy: f64 = hybrid.samples[i0..=i1].iter().map(|h| h * h).sum();
+        assert!((window_energy - 0.4).abs() < 1e-9, "{window_energy}");
+        // The early echogram arrival is kept as-is, and the late ray arrival
+        // is scaled by the same gain.
+        assert!((hybrid.samples[10].abs() - libm::sqrt(0.5)).abs() < 1e-12);
+        assert!((hybrid.samples[200].abs() - libm::sqrt(0.05 * hybrid.tail_gain)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn hybrid_rejects_bad_calibration_inputs() {
+        let echo = [(0.010, 0.5)];
+        // No ray energy in the window.
+        assert!(hybrid_rir(&echo, &[0.3], &[0.1], 1000.0, 0.05, 0.01, 1).is_err());
+        // Mismatched slices.
+        assert!(hybrid_rir(&echo, &[0.05], &[], 1000.0, 0.05, 0.01, 1).is_err());
+        // Non-positive window.
+        assert!(hybrid_rir(&echo, &[0.05], &[0.1], 1000.0, 0.05, 0.0, 1).is_err());
     }
 
     #[test]

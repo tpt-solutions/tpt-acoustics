@@ -4,6 +4,9 @@
 # All positions are in metres and must lie strictly inside the room.
 # Unknown keys are rejected, so a typo fails instead of being ignored.
 
+# Study kind: "room", "partition" or "rotor".
+kind = "room"
+
 [room]
 # Length, width and height in metres.
 dimensions = [10.0, 8.0, 6.0]

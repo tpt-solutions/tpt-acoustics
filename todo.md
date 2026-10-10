@@ -249,7 +249,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
       from secondary mirrors of the Wikipedia article, which agree with each other. **Still open:**
       confirm all points against the BS.468-4 text, since 31.5 Hz–2.5 kHz and 12.5–20 kHz are
       unconfirmed. Quasi-peak detector not addressed.
-- [ ] **Moore loudness** — unticked in Phase 2 (not implemented). Moore-Glasberg (ISO 532-2) is open.
+- [ ] **Moore loudness** — unticked in Phase 2 (not implemented). **Decision:** deferred. Moore–Glasberg needs either the ISO 532-2 tables (licensed) or the published 1996 and 2007 formulas, and the choice of reference must be made first. Implement only with a cited formula and its test values.
 - [x] `zwicker_stationary`: spectral spreading added (Zwicker's 27 dB/Bark lower slope and
       level-dependent upper slope). A 1 kHz / 40 dB tone now rates 1.02 sone against 1 sone in
       ISO 532-1; tests pin it within 5 %. Negative SPL allowed, Terhardt wording fixed. The model
@@ -274,15 +274,12 @@ Applied to every crate below (referenced by name, not repeated per crate):
       solver in the workspace, so it is a classification lemma, not a stability proof of a scheme.
 
 ### 4.3 Missing features vs spec
-- [ ] GMRES (iterative) solver in `tpt-acou-wave` consuming the FMM matvec, with a preconditioner *(partly done)*: `tpt_acou_wave::krylov::gmres` is restarted, right-preconditioned complex GMRES over any matvec closure, with a Jacobi option. It matches the dense BEM exterior solve. **Still open:** wiring it to the FMM operator on boundary nodes.
+- [ ] GMRES (iterative) solver in `tpt-acou-wave` consuming the FMM matvec, with a preconditioner *(partly done)*: `tpt_acou_wave::krylov::gmres` is restarted, right-preconditioned complex GMRES over any matvec closure, with a Jacobi option. It matches the dense BEM exterior solve. **Decision:** not wired to the FMM. The exterior Neumann solve uses the adjoint double-layer operator `K′`, and the existing FMM evaluates only the single-layer potential, so it cannot supply that matvec. A double-layer FMM (a multipole expansion of `∂G/∂n`) is the prerequisite. Recommended as its own piece of work.
 - [ ] ISM with wall phase / complex impedance (low-frequency / modal behaviour)
 - [ ] Multi-parameter differentiable ray/ISM gradients (dimensions, per-band absorption,
       source/receiver position); evaluate `tpt-math-autodiff` / reverse mode
-- [ ] Room impulse response (RIR) generation from echogram + ray tail *(partly done)*:
-      `tpt_acou_ray::rir::rir_from_echogram` builds an RIR from the ISM echogram with random signs
-      (energy-correct, not phase-correct). The ray-tail hybrid is open: the ray and ISM energy
-      normalisations differ, so they need reconciling first.
-- [ ] Optional `serde` support, `rayon` parallel feature (ray tracing, BEM assembly) *(wasm32 CI target added: `no_std` crates build for `wasm32-unknown-unknown`; `serde` and `rayon` still open)*
+- [x] Room impulse response from echogram (`tpt_acou_ray::rir::rir_from_echogram`, energy-correct, not phase-correct) and the ISM–ray hybrid (`rir::hybrid_rir`). **Decision:** the ISM and ray energies are on different scales, so the ray tail is calibrated to the ISM energy in a window around the crossover. The gain is returned, and the calibration is continuous at the join. It is an energy match, not a derivation from first principles.
+- [ ] Optional `serde` support, `rayon` parallel feature (ray tracing, BEM assembly) *(wasm32 CI target added: `no_std` crates build for `wasm32-unknown-unknown`)*. **Decision:** `rayon` is deferred, because a parallel ray tracer changes the RNG stream and needs per-ray seeding first. `serde` is deferred until a caller needs it.
 - [x] criterion benchmarks (`crates/tpt-acou-ray/benches/ray.rs`: ray tracer, echogram, RIR). **Still open:** regression tracking (baseline storage and comparison in CI).
 
 ### 4.4 New features (innovation)
@@ -291,9 +288,9 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [x] RIR export to WAV (`tpt_acou_ray::rir::write_wav_f32`, 32-bit float mono). **Still open:**
       convolution-based auralization.
 - [ ] Differentiable inverse design: fit room to target RT60/C80; optimize panel absorption
-- [ ] Hybrid broadband RIR: ISM early + rays late + wave low-frequency, crossed at the Schroeder frequency
-- [x] STL import (`tpt_acou_ray::stl`, ASCII and binary, detected by size) and OBJ import (`tpt_acou_ray::obj`: vertices, polygon faces, slash and negative indices, `usemtl` groups; one material per scene). **Still open:** an octave-band material database (ISO 354 style).
-- [ ] Standards compliance report (TL, STC, OITC, Lw, ISO 3382, ISO 532)
+- [ ] Hybrid broadband RIR: ISM early + rays late *(done, see the RIR item above)*; the wave low-frequency band and the crossover at the Schroeder frequency are still open. **Decision:** the wave part needs a band-limited BEM/FEM response and is deferred until one is wanted for a concrete study.
+- [x] STL import (`tpt_acou_ray::stl`, ASCII and binary, detected by size) and OBJ import (`tpt_acou_ray::obj`: vertices, polygon faces, slash and negative indices, `usemtl` groups; one material per scene). **Still open:** an octave-band material database (ISO 354 style). **Decision:** deferred until a cited data source is chosen. Made-up absorption values would be worse than none.
+- [ ] Standards compliance report (TL, STC, OITC, Lw, ISO 3382, ISO 532). **Decision:** deferred. It needs OITC, STI and G, which are not implemented, and a report that cites a standard only makes sense once those values can be checked.
 - [ ] Uncertainty quantification via seeded Monte Carlo over material uncertainty
 - [ ] Python (PyO3) and WASM bindings
 
@@ -308,7 +305,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [ ] README: quick start, does/doesn't table and per-crate validation status are done; badges still open.
 - [x] Cookbook as one page (`docs/cookbook.md`): solver-choice table, units and conventions, glossary, recipes. **Still open:** the mdBook layout around it.
 - [x] Validation page (`docs/validation.md`): every reference with its tolerance and test name. Open items are listed on the page.
-- [ ] Templates: room study done (`templates/room-study.toml`, run with `tpt-acou study`). **Still open:** partition-study and rotor-noise-study templates; partition and rotor studies need their own command.
+- [x] Templates: room, partition and rotor studies in `templates/`, run with `tpt-acou study <file>` (each file has a `kind`). Mass-law partitions and the FW-H rotor are the models behind them.
 - [x] `tpt-acou-cli` crate (`crates/tpt-acou-cli`, binary `tpt-acou`): `rt60`, `stc` (mass or 16 TL values), `weight` and `study <file.toml>` subcommands, with exit status 2 for usage errors and 1 for failed computations.
 
 ### 4.6 Automation & hygiene

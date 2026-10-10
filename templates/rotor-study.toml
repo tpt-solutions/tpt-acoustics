@@ -1,0 +1,35 @@
+# Rotor study template for `tpt-acou study <file>`.
+#
+# A rotor of identical blades on a ring, each a compact monopole of constant
+# volume strength (thickness noise, FW-H far field). The report gives the
+# pressure amplitude at the blade-passing frequency (B·Ω/2π) and at its
+# half-harmonic, from a sampled history.
+#
+# Keep the blade tip subsonic: R·Ω must stay below the speed of sound, or the
+# far field is undefined and the study fails. Keep the observer off the blade
+# path.
+
+kind = "rotor"
+
+[rotor]
+# Number of blades.
+blades = 4
+# Ring radius in metres.
+radius_m = 0.25
+# Rotation rate in revolutions per second.
+rev_per_s = 50.0
+# Volume strength of each blade, in m³/s.
+strength_m3_per_s = 1.0
+
+[observer]
+# x, y and z in metres.
+position = [2.0, 0.0, 2.0]
+
+[analysis]
+# Sample rate in Hz.
+sample_rate_hz = 8192.0
+# Number of samples. The window should hold an integer number of
+# blade-passing periods for a clean projection.
+samples = 8192
+# Start time of the window in seconds.
+start_s = 0.5
