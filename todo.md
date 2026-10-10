@@ -297,9 +297,10 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [ ] Python (PyO3) and WASM bindings
 
 ### 4.5 Adoption: examples, docs, templates
-- [ ] `examples/`: `shoebox_rt60`, `room_impulse_response`, `partition_stc`, `sphere_radiation_bem`,
-      `fan_noise_fwh`, `loudness_a_weighting`, `spatial_audio_vbap`, `optimize_room_gradient`
-      (each asserts against an analytic/literature reference)
+- [ ] `examples/` *(partly done)*: done in `crates/tpt-acoustics/examples/`: `shoebox_rt60`,
+      `room_impulse_response`, `partition_stc`, `fan_noise_fwh`, `loudness_a_weighting`,
+      `spatial_audio_vbap`, each asserting against an analytic or literature value. **Still open:**
+      `sphere_radiation_bem` and `optimize_room_gradient`.
 - [ ] `tpt_acoustics::prelude` + `RoomBuilder` / `Simulation` builder API (10-line first program)
 - [ ] README: copy-paste quick start, does/doesn't-do table, badges, per-crate validation status
 - [ ] mdBook cookbook: solver-choice table, Schroeder frequency calculator, units/conventions, glossary
@@ -308,7 +309,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [ ] `tpt-acou-cli` crate: `rt60`, `stc`, `weight` subcommands
 
 ### 4.6 Automation & hygiene
-- [ ] Dependabot/Renovate, `cargo semver-checks`, `release-plz` + CHANGELOG.md
+- [x] Dependabot (`.github/dependabot.yml`, cargo + actions; Renovate not used). `cargo semver-checks`, `release-plz` + CHANGELOG.md still open
 - [ ] Coverage job (`cargo llvm-cov`), MSRV job, Windows + macOS test matrix
 - [ ] CI check that ticked todo items reference existing symbols (prevents the Moore-style drift)
-- [ ] Issue and PR templates
+- [x] Issue and PR templates (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`)

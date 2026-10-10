@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # Rust crates (workspace root and every crate). Git dependencies on the
+  # tpt-* siblings are pinned by `rev` and are updated by hand, not here.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Workflow action versions (actions/checkout, dtolnay/rust-toolchain, ...).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
