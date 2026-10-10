@@ -12,7 +12,8 @@ keywords = ["acoustics", "physics", "simulation", "audio", "dsp"]
 categories = ["science", "simulation", "multimedia::audio"]
 
 [features]
-default = ["core", "ray", "wave", "vibro", "aero", "psycho", "verify"]
+# `verify` (property tests, Kani harnesses) is opt-in: it pulls in proptest.
+default = ["core", "ray", "wave", "vibro", "aero", "psycho"]
 core = ["dep:tpt-acou-core"]
 ray = ["dep:tpt-acou-ray"]
 wave = ["dep:tpt-acou-wave"]

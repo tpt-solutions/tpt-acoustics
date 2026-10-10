@@ -10,7 +10,7 @@
 //! A(f)  = 20 log10 RA(f) + 2.00 dB
 //! RC(f) = 12194^2 f^2 / ((f^2+f1^2) (f^2+f4^2)),  C(f) = 20 log10 RC + 0.062
 //! RB(f) = 12194^2 f^3 / ((f^2+f1^2) sqrt(f^2+f3^2) (f^2+f4^2)),
-//! B(f)  = 20 log10 RB + 0.17
+//! B(f)  = 20 log10 RB + 1.96
 //! ```
 //!
 //! # Digital A-weighting filter
@@ -29,8 +29,14 @@
 //! # ITU-R BS.468-4
 //!
 //! Noise weighting per the nominal response table of Recommendation
-//! ITU-R BS.468-4 (log-frequency piecewise-linear interpolation; the curve
-//! peaks at +12.6 dB at 3.15 kHz).
+//! ITU-R BS.468-4 (log-frequency piecewise-linear interpolation; the standard
+//! curve peaks at +12.2 dB at 6.3 kHz).
+//!
+//! **Verification status:** the 3.15, 4, 5, 6.3, 8, 10 and 12.5 kHz points were
+//! taken from published secondary tables (mirrors of the Wikipedia article),
+//! which agree with each other and with the +12.2 dB peak at 6.3 kHz. They are
+//! not yet checked against the BS.468-4 text itself, and the 31.5 Hz–2.5 kHz
+//! and 14–20 kHz points were not confirmed at all.
 
 use tpt_acou_core::error::AcousticError;
 
@@ -72,7 +78,7 @@ pub fn c_weighting_db(f: f64) -> f64 {
 /// Nominal ITU-R BS.468-4 response table: `(frequency_hz, gain_db)` pairs
 /// from Recommendation ITU-R BS.468-4 (table reproduced from the public
 /// nominal values; the standard specifies tolerances around these).
-pub const ITU468_TABLE_DB: [(f64, f64); 17] = [
+pub const ITU468_TABLE_DB: [(f64, f64); 18] = [
     (31.5, -29.9),
     (63.0, -23.9),
     (100.0, -19.8),
@@ -81,11 +87,12 @@ pub const ITU468_TABLE_DB: [(f64, f64); 17] = [
     (800.0, -1.9),
     (1000.0, 0.0),
     (2000.0, 5.6),
-    (3150.0, 12.6),
-    (4000.0, 11.0),
-    (6300.0, 7.0),
-    (8000.0, 5.0),
-    (10000.0, 4.4),
+    (3150.0, 9.0), // secondary sources; unverified against BS.468-4 text
+    (4000.0, 10.5),
+    (5000.0, 11.7), // secondary sources; unverified against BS.468-4 text
+    (6300.0, 12.2),
+    (8000.0, 11.4),
+    (10000.0, 8.1), // secondary sources; unverified against BS.468-4 text
     (12500.0, 0.0),
     (14000.0, -5.4),
     (16000.0, -11.7),
@@ -313,9 +320,11 @@ mod tests {
         for &(f, v) in ITU468_TABLE_DB.iter() {
             assert!(approx(itu468_weighting_db(f), v, 1e-12));
         }
-        // Peak at 3.15 kHz.
-        let peak = ITU468_TABLE_DB.iter().fold(f64::MIN, |a, &(_, v)| a.max(v));
-        assert!(approx(peak, 12.6, 1e-12));
+        // The standard's peak is +12.2 dB at 6.3 kHz (confirmed against
+        // secondary sources; see the module note on unverified points).
+        assert!(approx(itu468_weighting_db(6300.0), 12.2, 1e-12));
+        assert!(itu468_weighting_db(4000.0) < 12.2);
+        assert!(itu468_weighting_db(8000.0) < 12.2);
         // Between 1 kHz and 2 kHz interpolates monotonically.
         let mid = itu468_weighting_db(1414.0);
         assert!(mid > 0.0 && mid < 5.6);

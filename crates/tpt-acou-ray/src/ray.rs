@@ -3,16 +3,18 @@
 //! Energy particles are shot from the source; each bounce deposits
 //! `alpha·E` on the wall (absorbed), redirects diffusely with probability
 //! `s(f)` (cosine-weighted Lambertian) or specularly otherwise, and is
-//! captured when its straight segment passes within the receiver's capture
-//! radius. The tracer keeps an explicit energy *partition*
-//! `injected = detected + absorbed + remaining`, which is what the
-//! energy-conservation property test (and `tpt-acou-verify`) checks.
+//! detected each time its straight segment passes within the receiver's
+//! capture radius; detection does not stop the particle. The tracer keeps an
+//! explicit energy *partition* `injected = absorbed + remaining`, which is
+//! what the energy-conservation property test (and `tpt-acou-verify`) checks.
 //!
 //! Decay curves use Schroeder backward integration; `T30` is extrapolated
 //! from the −5 dB…−35 dB window of the fitted decay slope.
 
 use alloc::vec;
 use alloc::vec::Vec;
+
+use tpt_acou_core::error::AcousticError;
 
 use crate::ism::ShoeboxRoom;
 use crate::rng::Xoshiro256;
@@ -54,28 +56,30 @@ impl Default for RayTracerConfig {
 /// Result of a Monte Carlo run: the energy partition plus detected arrivals.
 #[derive(Debug, Clone, Default)]
 pub struct RayTraceResult {
-    /// Arrival times of captured particles (s, unsorted).
+    /// Arrival times of captures (s, unsorted). A particle that passes the
+    /// receiver several times is recorded once per pass.
     pub detected_times: Vec<f64>,
-    /// Energy carried by each captured particle (same length as times).
+    /// Energy carried by each capture (same length as times). This is a
+    /// detection tally, not part of the energy partition: particles keep
+    /// their energy after capture.
     pub detected_energies: Vec<f64>,
     /// Total energy injected (1.0 for a standard run).
     pub injected: f64,
     /// Energy absorbed at boundaries.
     pub absorbed: f64,
     /// Energy still in flight (or below the energy floor / past the time
-    /// limit) when tracing ended: never detected, never absorbed.
+    /// limit) when tracing ended.
     pub remaining: f64,
     /// Mean number of bounces per particle.
     pub mean_bounces: f64,
 }
 
 impl RayTraceResult {
-    /// The energy accounting identity `injected = detected + absorbed +
-    /// remaining` as an absolute error (0 for exact bookkeeping).
+    /// The energy accounting identity `injected = absorbed + remaining` as an
+    /// absolute error (0 for exact bookkeeping).
     #[must_use]
     pub fn energy_partition_error(&self) -> f64 {
-        let detected: f64 = self.detected_energies.iter().copied().sum();
-        (self.injected - (detected + self.absorbed + self.remaining)).abs()
+        (self.injected - (self.absorbed + self.remaining)).abs()
     }
 }
 
@@ -149,16 +153,65 @@ fn cosine_hemisphere(rng: &mut Xoshiro256, n: Vec3) -> Vec3 {
     n
 }
 
+impl RayTracerConfig {
+    /// Checks the run parameters.
+    ///
+    /// # Errors
+    /// Returns [`AcousticError::InvalidArgument`] for `n_rays == 0`, a
+    /// non-positive or non-finite time limit, speed of sound or capture
+    /// radius, or a negative or non-finite energy floor.
+    pub fn validate(&self) -> Result<(), AcousticError> {
+        if self.n_rays == 0 {
+            return Err(AcousticError::InvalidArgument("n_rays must be > 0"));
+        }
+        if !(self.time_limit_s.is_finite() && self.time_limit_s > 0.0) {
+            return Err(AcousticError::InvalidArgument(
+                "time_limit_s must be finite and > 0",
+            ));
+        }
+        if !(self.speed_of_sound.is_finite() && self.speed_of_sound > 0.0) {
+            return Err(AcousticError::InvalidArgument(
+                "speed_of_sound must be finite and > 0",
+            ));
+        }
+        if !(self.capture_radius.is_finite() && self.capture_radius >= 0.0) {
+            return Err(AcousticError::InvalidArgument(
+                "capture_radius must be finite and >= 0",
+            ));
+        }
+        if !(self.min_energy.is_finite() && self.min_energy >= 0.0) {
+            return Err(AcousticError::InvalidArgument(
+                "min_energy must be finite and >= 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Traces energy particles through a shoebox room (analytic wall
 /// intersection).
-#[must_use]
+///
+/// # Errors
+/// Returns [`AcousticError::InvalidArgument`] if the configuration fails
+/// [`RayTracerConfig::validate`], or if `src` or `rcv` lies outside the room.
 pub fn trace_shoebox(
     room: &ShoeboxRoom,
     src: Vec3,
     rcv: Vec3,
     freq_hz: f64,
     config: &RayTracerConfig,
-) -> RayTraceResult {
+) -> Result<RayTraceResult, AcousticError> {
+    config.validate()?;
+    if !room.contains(src) {
+        return Err(AcousticError::InvalidArgument(
+            "source lies outside the room",
+        ));
+    }
+    if !room.contains(rcv) {
+        return Err(AcousticError::InvalidArgument(
+            "receiver lies outside the room",
+        ));
+    }
     let [lx, ly, lz] = room.dims();
     let alpha: Vec<f64> = (0..6)
         .map(|w| room.wall(w).absorption_at(freq_hz))
@@ -196,8 +249,9 @@ pub fn trace_shoebox(
                 let (_, dist_along) = point_segment_closest(rcv, from, to);
                 out.detected_times
                     .push(t + dist_along / config.speed_of_sound);
+                // The particle keeps tracing: terminating at first capture
+                // would truncate the late decay and bias T30 steep.
                 out.detected_energies.push(e);
-                break;
             }
             out.absorbed += e * alpha[wall];
             e *= 1.0 - alpha[wall];
@@ -212,7 +266,7 @@ pub fn trace_shoebox(
         }
     }
     out.mean_bounces = total_bounces as f64 / f64::from(config.n_rays);
-    out
+    Ok(out)
 }
 
 /// Traces energy particles through an arbitrary (closed) triangle scene,
@@ -220,14 +274,18 @@ pub fn trace_shoebox(
 ///
 /// For a ray that escapes the scene (open mesh), leftover energy is counted
 /// as `remaining`.
-#[must_use]
+///
+/// # Errors
+/// Returns [`AcousticError::InvalidArgument`] if the configuration fails
+/// [`RayTracerConfig::validate`].
 pub fn trace_scene(
     scene: &Scene,
     src: Vec3,
     rcv: Vec3,
     freq_hz: f64,
     config: &RayTracerConfig,
-) -> RayTraceResult {
+) -> Result<RayTraceResult, AcousticError> {
+    config.validate()?;
     let mut rng = Xoshiro256::new(config.seed);
     let e0 = 1.0 / f64::from(config.n_rays);
     let mut out = RayTraceResult {
@@ -257,8 +315,9 @@ pub fn trace_scene(
                 let (_, dist_along) = point_segment_closest(rcv, from, to);
                 out.detected_times
                     .push(t + dist_along / config.speed_of_sound);
+                // The particle keeps tracing: terminating at first capture
+                // would truncate the late decay and bias T30 steep.
                 out.detected_energies.push(e);
-                break;
             }
             let material = &scene.materials()[hit.material];
             let a = material.absorption_at(freq_hz);
@@ -276,7 +335,7 @@ pub fn trace_scene(
         }
     }
     out.mean_bounces = total_bounces as f64 / f64::from(config.n_rays);
-    out
+    Ok(out)
 }
 
 /// Backward-integrated (Schroeder) decay curve sampled at `bin_s` spacing:
@@ -307,7 +366,24 @@ pub fn schroeder_curve(times: &[f64], energies: &[f64], bin_s: f64) -> Vec<f64> 
 /// Returns `None` when the curve lacks enough decay data.
 #[must_use]
 pub fn rt60_from_curve(curve: &[f64], bin_s: f64) -> Option<f64> {
-    if curve.len() < 4 || curve[0] <= 0.0 {
+    decay_time_from_curve(curve, bin_s, -5.0, -35.0)
+}
+
+/// Decay time from a Schroeder curve, fitted between `upper_db` and
+/// `lower_db` (both negative, `upper_db > lower_db`, in dB relative to the
+/// curve's first sample) and extrapolated to a 60 dB decay. T30 uses
+/// `(-5, -35)`, T20 `(-5, -25)`, EDT `(0, -10)`.
+///
+/// Returns `None` if the curve does not reach `lower_db` or the window is
+/// too short to fit.
+#[must_use]
+pub fn decay_time_from_curve(
+    curve: &[f64],
+    bin_s: f64,
+    upper_db: f64,
+    lower_db: f64,
+) -> Option<f64> {
+    if curve.len() < 4 || curve[0] <= 0.0 || upper_db <= lower_db {
         return None;
     }
     let peak = curve[0];
@@ -316,10 +392,10 @@ pub fn rt60_from_curve(curve: &[f64], bin_s: f64) -> Option<f64> {
     let mut i35 = None;
     for (i, &v) in curve.iter().enumerate() {
         let l = db(v);
-        if i5.is_none() && l <= -5.0 {
+        if i5.is_none() && l <= upper_db {
             i5 = Some(i);
         }
-        if l <= -35.0 {
+        if l <= lower_db {
             i35 = Some(i);
             break;
         }
@@ -434,14 +510,17 @@ mod tests {
             Vec3::new(6.0, 4.0, 1.5),
             1000.0,
             &config,
-        );
+        )
+        .unwrap();
         assert_eq!(res.absorbed, 0.0);
         assert!(
             res.energy_partition_error() < 1e-9,
             "partition error {}",
             res.energy_partition_error()
         );
-        assert!(res.injected - res.detected_energies.iter().sum::<f64>() - res.remaining < 1e-9);
+        // Particles keep tracing after capture, so the receiver saw at least
+        // one pass in a room this size.
+        assert!(!res.detected_times.is_empty());
     }
 
     #[test]
@@ -462,7 +541,8 @@ mod tests {
             Vec3::new(6.0, 4.0, 1.5),
             1000.0,
             &config,
-        );
+        )
+        .unwrap();
         assert!(res.absorbed > 0.0);
         assert!(
             res.energy_partition_error() < 1e-9,
@@ -490,12 +570,13 @@ mod tests {
             Vec3::new(8.0, 6.0, 3.0),
             1000.0,
             &config,
-        );
+        )
+        .unwrap();
         let curve = schroeder_curve(&res.detected_times, &res.detected_energies, 0.005);
         let t30 = rt60_from_curve(&curve, 0.005).expect("decay long enough for T30");
         let rel = (t30 - sabine).abs() / sabine;
         assert!(
-            rel < 0.35,
+            rel < 0.10,
             "t30 {t30:.3} vs sabine {sabine:.3} (rel {rel:.3})"
         );
     }
@@ -519,7 +600,8 @@ mod tests {
                 Vec3::new(7.0, 5.0, 2.5),
                 1000.0,
                 &config,
-            );
+            )
+            .unwrap();
             let curve = schroeder_curve(&res.detected_times, &res.detected_energies, 0.005);
             t60s[i] = rt60_from_curve(&curve, 0.005).expect("t30");
         }
@@ -546,8 +628,8 @@ mod tests {
         };
         let src = Vec3::new(1.5, 1.5, 1.5);
         let rcv = Vec3::new(4.5, 3.5, 1.5);
-        let a = trace_shoebox(&room, src, rcv, 1000.0, &config);
-        let b = trace_scene(&scene, src, rcv, 1000.0, &config);
+        let a = trace_shoebox(&room, src, rcv, 1000.0, &config).unwrap();
+        let b = trace_scene(&scene, src, rcv, 1000.0, &config).unwrap();
         // Deterministic seeds make the two paths produce the *same* random
         // sequence; intersection differs only by epsilon nudges.
         assert!(b.energy_partition_error() < 1e-9);

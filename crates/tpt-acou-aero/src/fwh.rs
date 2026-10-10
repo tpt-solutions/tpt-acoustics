@@ -71,7 +71,11 @@ pub fn retarded_time(x: Vec3, y0: Vec3, source_velocity: Vec3, c0: f64, t: f64) 
 /// source's own time frame).
 ///
 /// `p'_T = 1/(4 pi) * d/dt[ Q(t_r) / (a (1 - M_r)) ]`, differentiated
-/// numerically in observer time.
+/// numerically in observer time with a central difference (step = one
+/// sample).
+///
+/// Returns `NaN` where the far field is undefined: observer at the source
+/// position, or `1 - M_r <= 0` (no subsonic retarded time).
 #[must_use]
 pub fn monopole_pressure(
     ambient: &Ambient,
@@ -80,21 +84,29 @@ pub fn monopole_pressure(
     observer: Vec3,
     time: f64,
 ) -> f64 {
-    let dt = 1.0 / source.strength.sample_rate;
+    let h = 1.0 / source.strength.sample_rate;
     let f = |t: f64| {
         let tr = retarded_time(observer, source.position, source_velocity, ambient.c0, t);
         let d = observer - (source.position + source_velocity * tr);
         let a = d.norm();
+        if a <= 0.0 {
+            return f64::NAN;
+        }
         let mr = source_velocity.dot(d / a) / ambient.c0;
+        if 1.0 - mr <= 0.0 {
+            return f64::NAN;
+        }
         source.strength.at(tr) / (a * (1.0 - mr))
     };
-    (f(time + dt) - f(time)) / (4.0 * core::f64::consts::PI * dt)
+    (f(time + h) - f(time - h)) / (4.0 * core::f64::consts::PI * 2.0 * h)
 }
 
 /// Far-field pressure (Pa) of a single moving dipole (loading) source with
 /// force history `F(t)` (N) along `source.direction`.
 ///
-/// `p'_L = 1/(4 pi c0) * d/dt[ F(t_r) . x_hat / (a (1 - M_r)) ]`.
+/// `p'_L = 1/(4 pi c0) * d/dt[ F(t_r) . x_hat / (a (1 - M_r)) ]`, central
+/// difference in observer time. Returns `NaN` where the far field is
+/// undefined (see [`monopole_pressure`]).
 #[must_use]
 pub fn dipole_pressure(
     ambient: &Ambient,
@@ -103,30 +115,40 @@ pub fn dipole_pressure(
     observer: Vec3,
     time: f64,
 ) -> f64 {
-    let dt = 1.0 / source.strength.sample_rate;
+    let h = 1.0 / source.strength.sample_rate;
     let f = |t: f64| {
         let tr = retarded_time(observer, source.position, source_velocity, ambient.c0, t);
         let d = observer - (source.position + source_velocity * tr);
         let a = d.norm();
+        if a <= 0.0 {
+            return f64::NAN;
+        }
         let mr = source_velocity.dot(d / a) / ambient.c0;
+        if 1.0 - mr <= 0.0 {
+            return f64::NAN;
+        }
         let x_hat = d / a;
         source.direction.dot(x_hat) * source.strength.at(tr) / (a * (1.0 - mr))
     };
-    (f(time + dt) - f(time)) / (4.0 * core::f64::consts::PI * ambient.c0 * dt)
+    (f(time + h) - f(time - h)) / (4.0 * core::f64::consts::PI * ambient.c0 * 2.0 * h)
 }
 
-/// Builds `B` compact monopole sources evenly spaced on a ring of radius
-/// `radius` rotating about the z axis with angular rate `omega` (rad/s),
-/// each with constant strength history `q` (m³/s) sampled at `sample_rate`
-/// for `n_samples`. The constant-strength ring models blade thickness noise
-/// at the blade-passing frequency `BPF = B * omega / (2 pi)`.
+/// Builds the `B` compact monopole sources of a ring of radius `radius` in
+/// its t = 0 layout (blades evenly spaced about the z axis), each with
+/// constant strength history `q` (m³/s) sampled at `sample_rate` for
+/// `n_samples`.
+///
+/// This is a static snapshot: it carries no rotation. The rotating dynamics,
+/// including the emission-time blade positions and velocities, live in
+/// [`rotating_ring_pressure`]. Use this builder when the sources are needed
+/// as explicit [`CompactSource`] values, e.g. for the moving-monopole
+/// functions.
 ///
 /// # Errors
 /// Propagates [`crate::source::TimeSignal::new`] errors.
 pub fn rotating_monopole_ring(
     blade_count: u32,
     radius: f64,
-    _omega: f64,
     q: f64,
     sample_rate: f64,
     n_samples: usize,
@@ -143,11 +165,20 @@ pub fn rotating_monopole_ring(
     Ok(sources)
 }
 
-/// Total far-field pressure of a set of rotating monopoles evaluated at
-/// `observer` over the window `times` (the ring's rotational geometry is
-/// advanced by `omega` per the emission time of each sample; the ring is
-/// treated as spinning with each blade's *emission angle*
-/// `theta_b + omega * t_r`).
+/// Total far-field thickness pressure (Pa) at `observer` and observer time
+/// `time` of `blade_count` blades, each a monopole of constant strength `q`
+/// (m³/s) on a ring of radius `radius` rotating at `omega` (rad/s) about the
+/// z axis.
+///
+/// Each blade is a moving monopole evaluated at its emission time: position
+/// `R (cos θ, sin θ, 0)` and velocity `R ω (-sin θ, cos θ, 0)` with
+/// `θ = θ_b + ω t_r`. The far-field form `1/(4π) d/dt[ q / (a (1 - M_r)) ]`
+/// includes the convective factor `1/(1 - M_r)`, with `M_r` the emission-time
+/// Mach number toward the observer.
+///
+/// Returns `0.0` for `omega = 0` (a fixed ring of constant strength radiates
+/// nothing), and `NaN` where the far field is undefined (observer at a blade,
+/// or `1 - M_r <= 0`).
 #[must_use]
 pub fn rotating_ring_pressure(
     ambient: &Ambient,
@@ -158,21 +189,32 @@ pub fn rotating_ring_pressure(
     observer: Vec3,
     time: f64,
 ) -> f64 {
-    // Direct geometric evaluation: each blade is a moving monopole whose
-    // emission-time angle follows the rotation.
+    if omega == 0.0 {
+        return 0.0;
+    }
+    // Central-difference step: 1/32 of a revolution.
+    let h = core::f64::consts::TAU / (32.0 * omega.abs());
     let mut total = 0.0;
     for b in 0..blade_count {
         let theta0 = core::f64::consts::TAU * b as f64 / f64::from(blade_count);
         let f = |t: f64| {
             let tr = ring_retarded_time(observer, radius, omega, theta0, ambient.c0, t);
             let angle = theta0 + omega * tr;
-            let y = Vec3::new(radius * libm::cos(angle), radius * libm::sin(angle), 0.0);
+            let (s, c) = (libm::sin(angle), libm::cos(angle));
+            let y = Vec3::new(radius * c, radius * s, 0.0);
+            let vel = Vec3::new(-radius * omega * s, radius * omega * c, 0.0);
             let d = observer - y;
-            q / d.norm()
+            let a = d.norm();
+            if a <= 0.0 {
+                return f64::NAN;
+            }
+            let mr = vel.dot(d / a) / ambient.c0;
+            if 1.0 - mr <= 0.0 {
+                return f64::NAN;
+            }
+            q / (a * (1.0 - mr))
         };
-        // d/dt with a finite step scaled to the rotation.
-        let step = 1.0 / (32.0 * omega / core::f64::consts::TAU);
-        let p = (f(time + step) - f(time)) / step;
+        let p = (f(time + h) - f(time - h)) / (2.0 * h);
         total += p / (4.0 * core::f64::consts::PI);
     }
     total
@@ -304,6 +346,51 @@ mod tests {
             amp_bpf > 4.0 * amp_off.max(1e-12),
             "BPF amp {amp_bpf:.3e} vs off-tone {amp_off:.3e}"
         );
+    }
+
+    #[test]
+    fn stationary_ring_radiates_nothing() {
+        // omega = 0 used to divide by zero; a fixed constant-strength ring
+        // has no time-varying geometry, so its far field is exactly zero.
+        let amb = Ambient::air_20c();
+        let p = rotating_ring_pressure(&amb, 4, 0.25, 0.0, 1.0, Vec3::new(2.0, 0.0, 2.0), 0.5);
+        assert_eq!(p, 0.0);
+    }
+
+    #[test]
+    fn undefined_far_field_is_nan_not_inf() {
+        // Observer at the source: a = 0 has no far-field value.
+        let amb = Ambient::air_20c();
+        let source = CompactSource {
+            position: Vec3::ZERO,
+            direction: Vec3::ZERO,
+            strength: TimeSignal::new(vec![1.0; 64], 1000.0).unwrap(),
+        };
+        let p = monopole_pressure(&amb, &source, Vec3::ZERO, Vec3::ZERO, 0.01);
+        assert!(p.is_nan(), "got {p}");
+    }
+
+    #[test]
+    fn ring_pressure_is_directional_and_finite() {
+        // Weak check: with the convective factor the far field depends on the
+        // observer side, and stays finite. An analytic benchmark for the
+        // amplitude is still open (see todo.md 4.2).
+        let amb = Ambient::air_20c();
+        let omega = core::f64::consts::TAU * 200.0; // Tip Mach ~0.12 at R = 0.25
+        let rms = |obs: Vec3| {
+            let sr = 16384.0_f64;
+            let mut acc = 0.0;
+            for k in 0..4096 {
+                let t = 0.5 + k as f64 / sr;
+                let p = rotating_ring_pressure(&amb, 2, 0.25, omega, 1.0, obs, t);
+                acc += p * p;
+            }
+            libm::sqrt(acc / 4096.0)
+        };
+        let toward = rms(Vec3::new(0.0, 5.0, 0.0));
+        let away = rms(Vec3::new(0.0, -5.0, 0.0));
+        assert!(toward.is_finite() && away.is_finite());
+        assert!(toward != away, "no directivity: {toward:e} vs {away:e}");
     }
 
     #[test]

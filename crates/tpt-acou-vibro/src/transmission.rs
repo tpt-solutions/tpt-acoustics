@@ -7,21 +7,22 @@
 //!   familiar field-incidence approximation `TL = 20 log10(m f) - 47.5 dB`
 //!   (SI units) in the mass-law range.
 //! * STC (ASTM E413): 1/3-octave TL spectrum from 125 Hz to 4 kHz compared
-//!   against the reference contour (3 dB/band rise 125–1000 Hz, 1 dB/band
-//!   rise 1000–3150 Hz, flat 3150–4000 Hz), shifted in 1 dB steps to the
-//!   highest value with total deficit ≤ 32 dB and no single deficit > 8 dB.
+//!   against the reference contour (-16, -13, -10, -7, -4, -1, 0 dB relative
+//!   to 500 Hz at 125–500 Hz, then +1, +2, +3, +4 at 630–1250 Hz, then flat
+//!   +4 dB from 1600–4000 Hz), shifted in 1 dB steps to the highest value
+//!   with total deficit ≤ 32 dB and no single deficit > 8 dB.
 
 use tpt_acou_core::error::AcousticError;
 use tpt_acou_core::medium::Medium;
 
-/// The ASTM E413 reference contour (unshifted) in dB at the 16 STC
-/// 1/3-octave bands, 125 Hz … 4000 Hz. The STC rating equals the 500 Hz
-/// entry (index 6) of the shifted contour.
-pub const STC_CONTOUR_DB: [f64; 16] = [
-    24.0, 27.0, 30.0, 33.0, 36.0, 39.0, 42.0, 45.0, 48.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 56.0,
+/// The ASTM E413 reference contour in dB relative to its 500 Hz value, at the
+/// 16 STC 1/3-octave bands in [`STC_BAND_HZ`] (125 Hz … 4000 Hz). The STC
+/// rating is the absolute contour value at 500 Hz (index 6).
+pub const STC_CONTOUR_REL_DB: [f64; 16] = [
+    -16.0, -13.0, -10.0, -7.0, -4.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0,
 ];
 
-/// The STC band center frequencies in Hz, matching [`STC_CONTOUR_DB`].
+/// The STC band center frequencies in Hz, matching [`STC_CONTOUR_REL_DB`].
 pub const STC_BAND_HZ: [f64; 16] = [
     125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0,
     2500.0, 3150.0, 4000.0,
@@ -58,11 +59,13 @@ fn beta_of(m_kg_per_m2: f64, f: f64, medium: &Medium) -> f64 {
 /// `spectrum` is a slice of `(frequency_hz, tl_db)` pairs; the 16 STC bands
 /// (125 Hz … 4 kHz) must all be present (frequencies matched to a 1%
 /// tolerance). Returns the highest integer STC value `R` such that the
-/// contour `STC_CONTOUR_DB + (R - 50)` shifted to pass through `R` at 500 Hz
-/// keeps the total deficit ≤ 32 dB with no single deficit > 8 dB.
+/// reference contour, positioned so its 500 Hz value is `R`, has every
+/// deficit (`contour - TL`, positive parts only) ≤ 8 dB and total deficit
+/// ≤ 32 dB.
 ///
 /// # Errors
-/// Returns [`AcousticError::InvalidArgument`] if any STC band is missing.
+/// Returns [`AcousticError::InvalidArgument`] if any STC band is missing, or
+/// if no rating in the search range satisfies the criteria.
 pub fn sound_transmission_class(spectrum: &[(f64, f64)]) -> Result<i32, AcousticError> {
     // Extract the TL at each STC band.
     let mut tl = [0.0_f64; 16];
@@ -74,35 +77,26 @@ pub fn sound_transmission_class(spectrum: &[(f64, f64)]) -> Result<i32, Acoustic
             .ok_or(AcousticError::InvalidArgument("missing STC band"))?;
         tl[band] = got;
     }
-    // Search the shift: contour shift `s` (integer dB), STC = 42 + s
-    // (contour passes 42 dB at 500 Hz). Highest s with deficits within limits.
-    let mut best = i32::MIN;
-    for shift in -40..=40 {
+    // Deficits grow monotonically with the rating, so the feasible set is
+    // downward-closed and a scan from the top finds the maximum.
+    for rating in (-60..=150).rev() {
         let mut total = 0.0;
         let mut max_single = 0.0_f64;
-        let mut ok = true;
         for b in 0..16 {
-            let contour = STC_CONTOUR_DB[b] + shift as f64;
+            let contour = STC_CONTOUR_REL_DB[b] + f64::from(rating);
             let deficit = contour - tl[b];
             if deficit > 0.0 {
                 total += deficit;
                 max_single = max_single.max(deficit);
             }
-            if total > 32.0 || max_single > 8.0 {
-                ok = false;
-                break;
-            }
         }
-        if ok {
-            best = best.max(42 + shift);
+        if total <= 32.0 && max_single <= 8.0 {
+            return Ok(rating);
         }
     }
-    if best == i32::MIN {
-        return Err(AcousticError::InvalidArgument(
-            "spectrum fails the STC contour criteria at every shift",
-        ));
-    }
-    Ok(best)
+    Err(AcousticError::InvalidArgument(
+        "spectrum fails the STC contour criteria at every rating",
+    ))
 }
 
 #[cfg(test)]
@@ -150,32 +144,33 @@ mod tests {
     }
 
     #[test]
-    fn stc_of_the_reference_contour_is_plus_two() {
-        // A spectrum lying exactly on the contour admits a +2 dB shift
-        // (16 bands x 2 dB = the full 32 dB total-deficit allowance).
+    fn stc_of_the_reference_contour_is_52() {
+        // Spectrum = the STC-50 contour (500 Hz value 50). At rating R the
+        // deficit is (R - 50) in every band: 16 x (R-50) <= 32 gives R = 52.
         let spectrum: Vec<(f64, f64)> = STC_BAND_HZ
             .iter()
-            .zip(STC_CONTOUR_DB.iter())
-            .map(|(&f, &tl)| (f, tl))
+            .zip(STC_CONTOUR_REL_DB.iter())
+            .map(|(&f, &rel)| (f, 50.0 + rel))
             .collect();
-        assert_eq!(sound_transmission_class(&spectrum).unwrap(), 44);
+        assert_eq!(sound_transmission_class(&spectrum).unwrap(), 52);
     }
 
     #[test]
     fn stc_of_uniform_60_db_spectrum() {
-        // A flat 60 dB spectrum: every shift up to contour+8 deficit-free
-        // until the 8 dB single-band rule binds: contour max = 56 + shift;
-        // shift = 12 gives 500 Hz contour 54 <= 60 ✓ all bands <= 60 ✓
-        // deficits 0 -> highest shift with no deficit: limited by nothing,
-        // so cap at the search range: contour max 56+40... but STC defined
-        // by DEFICITS only: a spectrum ABOVE the contour everywhere rates
-        // limited by the +40 range end. Realistically STC caps at 42+40=82.
+        // Flat 60 dB: at rating R the deficits are max(0, rel + R - 60).
+        // R = 60 gives 1+2+3+6*4 = 30 dB total (<= 32, max 4 dB); R = 61
+        // adds 1 to every band with rel >= 0 for 40 dB total -> STC = 60.
         let spectrum: Vec<(f64, f64)> = STC_BAND_HZ.iter().map(|&f| (f, 60.0)).collect();
-        let stc = sound_transmission_class(&spectrum).unwrap();
-        // The TOTAL-deficit rule binds first: at shift s the seven bands
-        // >= 1000 Hz carry deficits (s-9, s-8, ..., s-4, s-4); s = 10 sums
-        // to 27 dB (allowed) and s = 11 to 34 dB (fails) -> STC = 52.
-        assert_eq!(stc, 42 + 10);
+        assert_eq!(sound_transmission_class(&spectrum).unwrap(), 60);
+    }
+
+    #[test]
+    fn stc_contour_matches_astm_e413_shape() {
+        // Relative contour: -16 at 125 Hz, 0 at 500 Hz, flat +4 from 1600 Hz.
+        assert_eq!(STC_CONTOUR_REL_DB[0], -16.0);
+        assert_eq!(STC_CONTOUR_REL_DB[6], 0.0);
+        assert_eq!(STC_CONTOUR_REL_DB[10], 4.0);
+        assert!(STC_CONTOUR_REL_DB[11..].iter().all(|&v| v == 4.0));
     }
 
     #[test]

@@ -22,7 +22,6 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
-    "MPL-2.0",
 ]
 confidence-threshold = 0.9
 
@@ -33,3 +32,10 @@ wildcards = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# In-house sibling crates (house convention), pinned by `rev` in Cargo.toml.
+allow-git = [
+    "https://github.com/tpt-solutions/tpt-math",
+    "https://github.com/tpt-solutions/tpt-fem",
+    "https://github.com/tpt-solutions/tpt-dsp",
+    "https://github.com/tpt-solutions/tpt-materials",
+]

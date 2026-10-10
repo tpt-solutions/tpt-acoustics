@@ -76,9 +76,10 @@ proptest! {
     fn echogram_direct_arrival_matches_geometry(
         (room, src, rcv) in arb_room_with_point(),
     ) {
-        let echo = room.echogram(src, rcv, 1000.0, 0)?;
+        let air = tpt_acou_core::medium::Medium::air_20c();
+        let echo = room.echogram(src, rcv, 1000.0, 0, &air)?;
         prop_assert_eq!(echo.len(), 1);
-        let expected_t = src.distance(rcv) / SPEED_OF_SOUND_REFERENCE;
+        let expected_t = src.distance(rcv) / air.speed_of_sound;
         prop_assert!((echo[0].0 - expected_t).abs() < 1e-12);
         // Lossless rigid wall: direct weight is exactly |G|² = 1/(4πd)².
         let d = src.distance(rcv);
@@ -102,7 +103,7 @@ proptest! {
             seed,
             speed_of_sound: SPEED_OF_SOUND_REFERENCE,
         };
-        let res = trace_shoebox(&room, src, rcv, 1000.0, &config);
+        let res = trace_shoebox(&room, src, rcv, 1000.0, &config)?;
         prop_assert_eq!(res.absorbed, 0.0);
         prop_assert!(res.energy_partition_error() < 1e-9,
             "partition error {}", res.energy_partition_error());
@@ -112,8 +113,7 @@ proptest! {
     /// unit of energy is accounted at a wall.
     #[test]
     fn lossy_ray_tracing_partition_closes(
-        dims in arb_shoebox_dims(),
-        (src, rcv) in arb_point_pair_in_room([9.0, 9.0, 9.0]),
+        (dims, src, rcv) in arb_dims_with_pair(),
         alpha in arb_absorption(),
         seed in any::<u64>(),
     ) {
@@ -131,7 +131,7 @@ proptest! {
             seed,
             speed_of_sound: SPEED_OF_SOUND_REFERENCE,
         };
-        let res = trace_shoebox(&room, src, rcv, 1000.0, &config);
+        let res = trace_shoebox(&room, src, rcv, 1000.0, &config)?;
         prop_assert!(res.energy_partition_error() < 1e-9,
             "partition error {}", res.energy_partition_error());
     }
@@ -141,8 +141,8 @@ proptest! {
 /// finite T30 and the extraction is stable under receiver radius (same room,
 /// two radii, T30 within 25%).
 #[test]
-fn t30_is_stable_across_capture_radii() {
-    let room = ShoeboxRoom::uniform([9.0, 7.0, 4.5], BoundaryMaterial::concrete_painted()).unwrap();
+fn t30_is_stable_across_capture_radii() -> Result<(), tpt_acou_core::AcousticError> {
+    let room = ShoeboxRoom::uniform([9.0, 7.0, 4.5], BoundaryMaterial::concrete_painted())?;
     let src = Vec3::new(2.0, 2.0, 2.2);
     let rcv = Vec3::new(7.0, 5.0, 2.2);
     let mut t30s = [0.0; 2];
@@ -155,7 +155,7 @@ fn t30_is_stable_across_capture_radii() {
             seed: 77,
             speed_of_sound: SPEED_OF_SOUND_REFERENCE,
         };
-        let res = trace_shoebox(&room, src, rcv, 1000.0, &config);
+        let res = trace_shoebox(&room, src, rcv, 1000.0, &config)?;
         let curve = schroeder_curve(&res.detected_times, &res.detected_energies, 0.005);
         t30s[i] = rt60_from_curve(&curve, 0.005).expect("T30 extraction");
     }
@@ -166,6 +166,7 @@ fn t30_is_stable_across_capture_radii() {
         t30s[0],
         t30s[1]
     );
+    Ok(())
 }
 
 // -- BEM invariants (spec.txt section 4, tpt-acou-verify) -------------------

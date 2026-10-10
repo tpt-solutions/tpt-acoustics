@@ -20,6 +20,7 @@
 use core::marker::PhantomData;
 use core::ops::{Add, Div, Mul, Neg, Sub};
 
+use crate::error::AcousticError;
 use crate::wave::Frequency;
 
 /// Marker unit: SI pascal (Pa) for acoustic pressure.
@@ -182,6 +183,21 @@ impl SoundPressureLevel {
         Self(20.0 * libm::log10(p_rms.get() / REFERENCE_PRESSURE_PA))
     }
 
+    /// Fallible [`from_pressure_rms`](Self::from_pressure_rms).
+    ///
+    /// # Errors
+    /// Returns [`AcousticError::InvalidArgument`] unless `p_rms` is positive
+    /// and finite.
+    pub fn try_from_pressure_rms(p_rms: Pressure) -> Result<Self, AcousticError> {
+        let p = p_rms.get();
+        if !(p > 0.0 && p.is_finite()) {
+            return Err(AcousticError::InvalidArgument(
+                "SPL requires a positive finite RMS pressure",
+            ));
+        }
+        Ok(Self(20.0 * libm::log10(p / REFERENCE_PRESSURE_PA)))
+    }
+
     /// The RMS pressure corresponding to this level.
     #[must_use]
     pub fn to_pressure_rms(&self) -> Pressure {
@@ -200,6 +216,21 @@ impl SoundPressureLevel {
         Self(10.0 * libm::log10(intensity.get() / REFERENCE_INTENSITY_WM2))
     }
 
+    /// Fallible [`from_intensity`](Self::from_intensity).
+    ///
+    /// # Errors
+    /// Returns [`AcousticError::InvalidArgument`] unless `intensity` is
+    /// positive and finite.
+    pub fn try_from_intensity(intensity: Intensity) -> Result<Self, AcousticError> {
+        let i = intensity.get();
+        if !(i > 0.0 && i.is_finite()) {
+            return Err(AcousticError::InvalidArgument(
+                "intensity level requires a positive finite I",
+            ));
+        }
+        Ok(Self(10.0 * libm::log10(i / REFERENCE_INTENSITY_WM2)))
+    }
+
     /// The intensity corresponding to this level (interpreted as an intensity
     /// level).
     #[must_use]
@@ -216,6 +247,21 @@ impl SoundPressureLevel {
     pub fn from_power(power: Power) -> Self {
         assert!(power.get() > 0.0, "power level requires W > 0");
         Self(10.0 * libm::log10(power.get() / REFERENCE_POWER_W))
+    }
+
+    /// Fallible [`from_power`](Self::from_power).
+    ///
+    /// # Errors
+    /// Returns [`AcousticError::InvalidArgument`] unless `power` is positive
+    /// and finite.
+    pub fn try_from_power(power: Power) -> Result<Self, AcousticError> {
+        let w = power.get();
+        if !(w > 0.0 && w.is_finite()) {
+            return Err(AcousticError::InvalidArgument(
+                "power level requires a positive finite W",
+            ));
+        }
+        Ok(Self(10.0 * libm::log10(w / REFERENCE_POWER_W)))
     }
 
     /// The sound power corresponding to this level (interpreted as a power
@@ -320,6 +366,21 @@ mod tests {
         let spl = SoundPressureLevel::from_pressure_rms(Pressure::new(1.0));
         assert!((spl.db() - 20.0 * libm::log10(1.0 / 20.0e-6)).abs() < TOL);
         assert!((spl.db() - 93.979_400_086_720_37).abs() < 1e-9);
+    }
+
+    #[test]
+    fn spl_try_variants_reject_non_positive_input() {
+        assert!(SoundPressureLevel::try_from_pressure_rms(Pressure::new(0.0)).is_err());
+        assert!(SoundPressureLevel::try_from_pressure_rms(Pressure::new(-1.0)).is_err());
+        assert!(SoundPressureLevel::try_from_pressure_rms(Pressure::new(f64::NAN)).is_err());
+        assert!(SoundPressureLevel::try_from_intensity(Intensity::new(0.0)).is_err());
+        assert!(SoundPressureLevel::try_from_power(Power::new(-1.0)).is_err());
+        // Valid input matches the panicking constructor.
+        let ok = SoundPressureLevel::try_from_pressure_rms(Pressure::new(1.0)).unwrap();
+        assert_eq!(
+            ok,
+            SoundPressureLevel::from_pressure_rms(Pressure::new(1.0))
+        );
     }
 
     #[test]

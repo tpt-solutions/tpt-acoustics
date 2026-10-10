@@ -283,17 +283,19 @@ impl ShoeboxRoom {
 
     /// Energetic echogram: `(arrival_time_s, energy_weight)` pairs for all
     /// images up to `max_order`, where the weight is `rc² / (4π d)²` —
-    /// proportional to received intensity. Includes the direct sound
-    /// (`order 0`).
+    /// proportional to received intensity. Arrival times use the speed of
+    /// sound of `medium`. Includes the direct sound (`order 0`).
     ///
     /// # Errors
-    /// Propagates [`ShoeboxRoom::image_sources`].
+    /// Propagates [`ShoeboxRoom::image_sources`]; returns
+    /// [`AcousticError::InvalidGeometry`] if `rcv` is outside the room.
     pub fn echogram(
         &self,
         src: Vec3,
         rcv: Vec3,
         freq_hz: f64,
         max_order: u32,
+        medium: &Medium,
     ) -> Result<Vec<(f64, f64)>, AcousticError> {
         if !self.contains(rcv) {
             return Err(AcousticError::InvalidGeometry(
@@ -313,7 +315,7 @@ impl ShoeboxRoom {
                 .map(|&w| self.walls[w].amplitude_reflection(freq_hz))
                 .product();
             let denom = 4.0 * core::f64::consts::PI * d;
-            out.push((d / SPEED_OF_SOUND_REFERENCE, rc * rc / (denom * denom)));
+            out.push((d / medium.speed_of_sound, rc * rc / (denom * denom)));
         }
         out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal));
         Ok(out)
@@ -499,12 +501,27 @@ mod tests {
     }
 
     #[test]
+    fn echogram_timing_follows_the_medium() {
+        let r = room();
+        let s = src();
+        let g = Vec3::new(3.0, 2.5, 2.0);
+        let air = Medium::air_20c();
+        let water = Medium::water_20c();
+        let t_air = r.echogram(s, g, 1000.0, 0, &air).unwrap()[0].0;
+        let t_water = r.echogram(s, g, 1000.0, 0, &water).unwrap()[0].0;
+        // Same path, speed ratio sets the time ratio.
+        let ratio = t_air / t_water;
+        assert!((ratio - water.speed_of_sound / air.speed_of_sound).abs() < 1e-12);
+    }
+
+    #[test]
     fn echogram_arrival_times_sorted_direct_first() {
         let r = room();
         let s = src();
         let g = Vec3::new(3.0, 2.5, 2.0);
-        let echo = r.echogram(s, g, 1000.0, 2).unwrap();
-        assert_eq!(echo[0].0, s.distance(g) / SPEED_OF_SOUND_REFERENCE);
+        let air = Medium::air_20c();
+        let echo = r.echogram(s, g, 1000.0, 2, &air).unwrap();
+        assert_eq!(echo[0].0, s.distance(g) / air.speed_of_sound);
         for w in echo.windows(2) {
             assert!(w[0].0 <= w[1].0 + 1e-15);
             assert!(w[1].1 >= 0.0);

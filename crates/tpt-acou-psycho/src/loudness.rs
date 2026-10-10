@@ -12,8 +12,9 @@
 //!
 //! This is an engineering approximation, *not* a certified ISO 532-1
 //! implementation (the standard's exact threshold and spreading tables are
-//! licensed content); it is anchored to reproduce ~1 sone at a 1 kHz / 40 dB
-//! tone and monotone behavior around it.
+//! licensed content). It has no spectral spreading yet, so a single-band tone
+//! rates ~0.57 sone at 1 kHz / 40 dB rather than the 1 sone of the standard;
+//! the test suite pins that value and the model is monotone in level.
 
 /// Threshold in quiet (dB SPL) of a pure tone, delegated to
 /// `tpt_dsp_core::psychoacoustic::threshold_in_quiet` (Terhardt's analytic
@@ -45,27 +46,25 @@ pub const BARK_CENTERS_HZ: [f64; 24] = [
 /// pressure levels.
 ///
 /// `band_levels_db` holds SPL values (dB re 20 µPa) for each of the 24
-/// [`BARK_CENTERS_HZ`]; missing bands (slice shorter than 24) are treated as
-/// below threshold. Specific loudness per band:
+/// [`BARK_CENTERS_HZ`]; missing bands (slice shorter than 24) contribute
+/// nothing. A band at or below its threshold contributes nothing, so use
+/// `f64::NEG_INFINITY` (not 0 dB) to mark a band as silent. Specific loudness
+/// per band:
 ///
 /// ```text
 /// N'(z) = 0.08 * max(E_z/E_thr(z) - 1, 0)^0.23   [sone/Bark]
 /// ```
 ///
 /// with `E = 10^(L/10)` the band excitation proxy and `E_thr` the
-/// A-weighting-anchored threshold excitation. Total loudness
-/// `N = sum N'(z)` (dz = 1 Bark each), so a 1 kHz tone at ~40 dB SPL rates
-/// about 1 sone.
+/// Terhardt threshold-in-quiet excitation at the band center. Total loudness
+/// `N = sum N'(z)` (dz = 1 Bark each). A 1 kHz tone at 40 dB SPL rates about
+/// 0.57 sone under this simplified model (no spreading).
+///
+/// Negative SPL values are accepted; they simply fall below threshold.
 ///
 /// # Errors
-/// Returns [`tpt_acou_core::AcousticError::InvalidArgument`] for negative
-/// levels (physically meaningless for SPL).
+/// Currently infallible; the `Result` is kept for API stability.
 pub fn zwicker_stationary(band_levels_db: &[f64]) -> Result<f64, tpt_acou_core::AcousticError> {
-    if band_levels_db.iter().any(|&l| l < 0.0) {
-        return Err(tpt_acou_core::AcousticError::InvalidArgument(
-            "band levels are SPL in dB and must be non-negative",
-        ));
-    }
     let mut total = 0.0;
     for (z, &level) in band_levels_db.iter().enumerate() {
         if z >= BARK_CENTERS_HZ.len() {
@@ -104,13 +103,16 @@ mod tests {
 
     #[test]
     fn zwicker_one_khz_tone_near_one_sone() {
-        // A 1 kHz tone at 40 dB SPL -> roughly 1 sone (loose tolerance for
-        // the simplified model: the single-band version lacks the standard's
-        // spreading skirts).
-        let mut levels = vec![0.0_f64; 24];
+        // A 1 kHz tone at 40 dB SPL: E/E_thr ~ 5000 gives 0.08 * 5000^0.23
+        // ~ 0.57 sone. The ISO 532-1 value is 1 sone; the gap is the missing
+        // spreading, so this pins the model's own value rather than the
+        // standard's.
+        // Other bands are set to -inf (true silence): 0 dB SPL is NOT silence,
+        // since several bands have threshold-in-quiet below 0 dB.
+        let mut levels = vec![f64::NEG_INFINITY; 24];
         levels[8] = 40.0; // band 9 centers at 1 kHz
         let n = zwicker_stationary(&levels).unwrap();
-        assert!(n > 0.3 && n < 2.0, "N = {n:.3} sone");
+        assert!(n > 0.5 && n < 0.6, "N = {n:.3} sone");
     }
 
     #[test]
@@ -135,9 +137,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_negative_levels() {
-        let mut levels = vec![30.0_f64; 24];
-        levels[3] = -1.0;
-        assert!(zwicker_stationary(&levels).is_err());
+    fn accepts_negative_levels() {
+        // Negative SPL is physically valid (very quiet signals); bands below
+        // threshold contribute nothing, so an all-negative input is silent.
+        let levels = vec![-10.0_f64; 24];
+        assert_eq!(zwicker_stationary(&levels).unwrap(), 0.0);
     }
 }

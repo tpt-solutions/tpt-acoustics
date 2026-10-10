@@ -19,7 +19,7 @@
 //! Early reflections of a shoebox room and the Sabine reverberation time:
 //!
 //! ```
-//! use tpt_acoustics::{ray, core};
+//! use tpt_acoustics::ray;
 //!
 //! let room = ray::ism::ShoeboxRoom::uniform(
 //!     [8.0, 5.0, 3.0],
@@ -27,7 +27,6 @@
 //! )
 //! .unwrap();
 //! let src = ray::vec3::Vec3::new(1.0, 1.0, 1.5);
-//! let rcv = ray::vec3::Vec3::new(6.0, 4.0, 2.0);
 //! let images = room.image_sources(src, 2).unwrap();
 //! assert!(images.len() > 1);
 //! assert!(room.sabine_rt60(1000.0) > 0.5);

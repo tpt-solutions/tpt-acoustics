@@ -162,7 +162,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [x] Ambisonics (B-format) encoding/decoding
 - [x] VBAP (Vector Base Amplitude Panning)
 - [x] Loudness model: Zwicker
-- [x] Loudness model: Moore
+- [ ] Loudness model: Moore (unticked — not implemented; see Phase 4 Moore item)
 - [x] Masking curves
 - [x] Per-Crate Checklist Template
 
@@ -216,3 +216,99 @@ Applied to every crate below (referenced by name, not repeated per crate):
       `tpt-anima` neural acoustic rendering, geometry optimization, and spatial audio training
       (forward-mode dual gradients over room geometry in `tpt-acou-ray::differentiable`;
       agent crates themselves do not exist yet — no reverse dependency)
+
+---
+
+## Phase 4 — Review Follow-ups (platform review, 2026-10-11)
+
+> Source: platform review of v1.0. Items marked *(verify)* were found by reading the code plus
+> domain knowledge and need confirming against the cited standard before changing. Full write-up:
+> the review plan (bugs A, gaps B, ideas C, adoption D).
+
+### 4.1 Build & CI (do first)
+- [x] Make the workspace build from a clean clone: the sibling path deps are now git deps pinned by
+      `rev` to `tpt-math`, `tpt-fem`, `tpt-dsp` and `tpt-materials` on GitHub (`Cargo.toml`), and
+      `deny.toml` allows those git sources. Pinned to the committed `HEAD` of each sibling. Note:
+      `tpt-dsp` has uncommitted lint-only edits locally, which are not in the pinned revision.
+- [x] Clean-clone verification: copied the project (without `target/` or `.git/`) to an empty directory
+      with no sibling checkouts and ran `cargo build --workspace`, which succeeds. This copied the working
+      tree, not a fresh `git clone`; that needs this change committed first.
+- [x] Make `verify` opt-in on the umbrella crate (removed from `default`; `proptest` only with `verify`)
+- [x] Reconsider `MPL-2.0` in `deny.toml` allow-list vs the MIT/Apache-only philosophy in spec.txt
+      (removed: no crate in the graph uses it, and `cargo deny check licenses` still passes)
+- [x] `no_std` CI: cover remaining crates where applicable. Reviewed: spec.txt only requires no_std
+      for the core layer, and CI already builds the five crates that declare `#![no_std]`. `tpt-acou-vibro`
+      is std-only and `tpt-acou-verify` depends on `proptest` (std), so neither is added.
+
+### 4.2 Correctness bugs
+- [x] **STC contour wrong** (`tpt-acou-vibro/src/transmission.rs`): replaced with the ASTM E413
+      contour (`STC_CONTOUR_REL_DB`); tests are analytic (the contour itself rates 52, flat 60 dB
+      rates 60). Not yet checked against a published STC worked example.
+- [ ] **ITU-R 468 table** (`tpt-acou-psycho/src/weighting.rs`) *(partly done)*: 3.15 kHz (+9.0),
+      4 kHz (+10.5), 5 kHz (+11.7), 6.3 kHz (+12.2, the peak), 8 kHz (+11.4) and 10 kHz (+8.1) taken
+      from secondary mirrors of the Wikipedia article, which agree with each other. **Still open:**
+      confirm all points against the BS.468-4 text, since 31.5 Hz–2.5 kHz and 12.5–20 kHz are
+      unconfirmed. Quasi-peak detector not addressed.
+- [ ] **Moore loudness** — unticked in Phase 2 (not implemented). Moore-Glasberg (ISO 532-2) is open.
+- [ ] `zwicker_stationary` *(partly done)*: doc corrected to ~0.57 sone (not 1), test tightened to
+      0.5–0.6, negative SPL allowed, "A-weighting-anchored" wording replaced with Terhardt.
+      **Still open:** spectral spreading is not implemented.
+- [x] **Ray tracer** (`tpt-acou-ray/src/ray.rs`): particles keep tracing after capture; detections
+      are a separate tally and the partition is `injected = absorbed + remaining`. RT60 test
+      tightened from 35% to 10% and passes.
+- [x] Ray tracer input validation: `RayTracerConfig::validate`, source and receiver inside the room
+      for shoebox tracing; `trace_shoebox` and `trace_scene` return `Result`.
+- [x] **FW-H** (`tpt-acou-aero/src/fwh.rs`): `rotating_ring_pressure` now includes the `1/(1-M_r)`
+      factor with the emission-time blade velocity; `omega = 0` returns 0; `rotating_monopole_ring`
+      dropped its unused `omega` parameter (static snapshot, **semver-breaking**); monopole, dipole
+      and ring derivatives are central differences; `a = 0` and `1 - M_r <= 0` return NaN.
+      Still open: an analytic rotor-noise benchmark (no published reference is wired in yet).
+- [x] `b_weighting_db` doc says +1.96 dB, matching the code.
+- [x] `ShoeboxRoom::echogram` takes a `&Medium` and uses its speed of sound (no more hard-coded 343).
+- [x] `SoundPressureLevel::try_from_pressure_rms` / `try_from_intensity` / `try_from_power` return
+      `Result`; the panicking constructors are unchanged.
+- [x] Umbrella crate doc example: removed unused `core` import and unused `rcv`.
+- [x] Confirm what the ticked CFL Kani harness proves: it checks only that the float `c·dt/dx <= 1`
+      test agrees with the integer rational bound. It exercises no solver; there is no time-domain
+      solver in the workspace, so it is a classification lemma, not a stability proof of a scheme.
+
+### 4.3 Missing features vs spec
+- [ ] GMRES (iterative) solver in `tpt-acou-wave` consuming the FMM matvec, with a preconditioner
+- [ ] ISM with wall phase / complex impedance (low-frequency / modal behaviour)
+- [ ] Multi-parameter differentiable ray/ISM gradients (dimensions, per-band absorption,
+      source/receiver position); evaluate `tpt-math-autodiff` / reverse mode
+- [ ] Room impulse response (RIR) generation from echogram + ray tail *(partly done)*:
+      `tpt_acou_ray::rir::rir_from_echogram` builds an RIR from the ISM echogram with random signs
+      (energy-correct, not phase-correct). The ray-tail hybrid is open: the ray and ISM energy
+      normalisations differ, so they need reconciling first.
+- [ ] Optional `serde` support, `rayon` parallel feature (ray tracing, BEM assembly), `wasm32` CI target
+- [ ] criterion benchmarks + regression tracking
+
+### 4.4 New features (innovation)
+- [x] ISO 3382 room metrics from an RIR: T20/T30/EDT, C50/C80, D50 (`tpt_acou_ray::iso3382`).
+      Analytic tests on an exponential decay. **Still open:** STI and G.
+- [x] RIR export to WAV (`tpt_acou_ray::rir::write_wav_f32`, 32-bit float mono). **Still open:**
+      convolution-based auralization.
+- [ ] Differentiable inverse design: fit room to target RT60/C80; optimize panel absorption
+- [ ] Hybrid broadband RIR: ISM early + rays late + wave low-frequency, crossed at the Schroeder frequency
+- [ ] OBJ/STL scene import + octave-band material database (ISO 354 style)
+- [ ] Standards compliance report (TL, STC, OITC, Lw, ISO 3382, ISO 532)
+- [ ] Uncertainty quantification via seeded Monte Carlo over material uncertainty
+- [ ] Python (PyO3) and WASM bindings
+
+### 4.5 Adoption: examples, docs, templates
+- [ ] `examples/`: `shoebox_rt60`, `room_impulse_response`, `partition_stc`, `sphere_radiation_bem`,
+      `fan_noise_fwh`, `loudness_a_weighting`, `spatial_audio_vbap`, `optimize_room_gradient`
+      (each asserts against an analytic/literature reference)
+- [ ] `tpt_acoustics::prelude` + `RoomBuilder` / `Simulation` builder API (10-line first program)
+- [ ] README: copy-paste quick start, does/doesn't-do table, badges, per-crate validation status
+- [ ] mdBook cookbook: solver-choice table, Schroeder frequency calculator, units/conventions, glossary
+- [ ] Validation page: analytic/standard reference vs ours, with tolerances
+- [ ] Templates (`cargo-generate` or `templates/`): room study, partition study, rotor-noise study (TOML input)
+- [ ] `tpt-acou-cli` crate: `rt60`, `stc`, `weight` subcommands
+
+### 4.6 Automation & hygiene
+- [ ] Dependabot/Renovate, `cargo semver-checks`, `release-plz` + CHANGELOG.md
+- [ ] Coverage job (`cargo llvm-cov`), MSRV job, Windows + macOS test matrix
+- [ ] CI check that ticked todo items reference existing symbols (prevents the Moore-style drift)
+- [ ] Issue and PR templates

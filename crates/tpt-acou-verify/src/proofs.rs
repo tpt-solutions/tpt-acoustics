@@ -123,6 +123,7 @@ fn ism_grazing_points_stay_finite() {
             Vec3::new(rx, ry, rz),
             1000.0,
             0, // direct path only keeps the unwind small
+            &tpt_acou_core::medium::Medium::air_20c(),
         )
         .expect("points inside");
     for (t, w) in &echo {

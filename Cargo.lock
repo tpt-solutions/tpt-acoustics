@@ -392,7 +392,7 @@ dependencies = [
  "num-complex",
  "tpt-acou-core",
  "tpt-dsp-core",
- "tpt-math-linalg-dense 0.1.0",
+ "tpt-math-linalg-dense 0.1.0 (git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525)",
 ]
 
 [[package]]
@@ -435,7 +435,7 @@ dependencies = [
  "tpt-acou-core",
  "tpt-fem-sparse",
  "tpt-math-linalg-complex",
- "tpt-math-linalg-dense 0.1.0",
+ "tpt-math-linalg-dense 0.1.0 (git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525)",
 ]
 
 [[package]]
@@ -454,6 +454,7 @@ dependencies = [
 [[package]]
 name = "tpt-dsp-core"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-dsp?rev=ebf36bd4340c50a02cfac65554c0d07e551d3fb6#ebf36bd4340c50a02cfac65554c0d07e551d3fb6"
 dependencies = [
  "num-complex",
  "num-traits",
@@ -462,6 +463,7 @@ dependencies = [
 [[package]]
 name = "tpt-fem-dynamic"
 version = "0.2.0"
+source = "git+https://github.com/tpt-solutions/tpt-fem?rev=366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3#366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3"
 dependencies = [
  "tpt-fem-eigen",
  "tpt-fem-sparse",
@@ -470,6 +472,7 @@ dependencies = [
 [[package]]
 name = "tpt-fem-eigen"
 version = "0.2.0"
+source = "git+https://github.com/tpt-solutions/tpt-fem?rev=366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3#366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3"
 dependencies = [
  "tpt-fem-sparse",
 ]
@@ -477,6 +480,7 @@ dependencies = [
 [[package]]
 name = "tpt-fem-modal"
 version = "0.2.0"
+source = "git+https://github.com/tpt-solutions/tpt-fem?rev=366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3#366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3"
 dependencies = [
  "tpt-fem-dynamic",
  "tpt-fem-eigen",
@@ -486,6 +490,7 @@ dependencies = [
 [[package]]
 name = "tpt-fem-sparse"
 version = "0.1.1"
+source = "git+https://github.com/tpt-solutions/tpt-fem?rev=366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3#366512b3cf1dd4a59dcb2f3a1ed6874eb3e72eb3"
 dependencies = [
  "tpt-math-linalg-dense 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -493,6 +498,7 @@ dependencies = [
 [[package]]
 name = "tpt-mat-database"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-materials?rev=6bf2d3da182b6d9cc8092752c55c861ca99be113#6bf2d3da182b6d9cc8092752c55c861ca99be113"
 dependencies = [
  "serde",
  "serde_json",
@@ -502,16 +508,10 @@ dependencies = [
 [[package]]
 name = "tpt-math-linalg-complex"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525#b22b2b373d337c0e719ffc80a08a7a48cb09c525"
 dependencies = [
- "tpt-math-linalg-dense 0.1.0",
- "tpt-math-numeric 0.1.0",
-]
-
-[[package]]
-name = "tpt-math-linalg-dense"
-version = "0.1.0"
-dependencies = [
- "tpt-math-numeric 0.1.0",
+ "tpt-math-linalg-dense 0.1.0 (git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525)",
+ "tpt-math-numeric 0.1.0 (git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525)",
 ]
 
 [[package]]
@@ -524,10 +524,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "tpt-math-numeric"
+name = "tpt-math-linalg-dense"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525#b22b2b373d337c0e719ffc80a08a7a48cb09c525"
 dependencies = [
- "num-traits",
+ "tpt-math-numeric 0.1.0 (git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525)",
 ]
 
 [[package]]
@@ -535,6 +536,14 @@ name = "tpt-math-numeric"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3cf48d7c841b2a882d06426b67f732a79e0b248d103ff8c1f6d2fdf1ab3df87b"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "tpt-math-numeric"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-math?rev=b22b2b373d337c0e719ffc80a08a7a48cb09c525#b22b2b373d337c0e719ffc80a08a7a48cb09c525"
 dependencies = [
  "num-traits",
 ]
