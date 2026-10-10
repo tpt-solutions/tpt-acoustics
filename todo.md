@@ -273,7 +273,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
       solver in the workspace, so it is a classification lemma, not a stability proof of a scheme.
 
 ### 4.3 Missing features vs spec
-- [ ] GMRES (iterative) solver in `tpt-acou-wave` consuming the FMM matvec, with a preconditioner
+- [ ] GMRES (iterative) solver in `tpt-acou-wave` consuming the FMM matvec, with a preconditioner *(partly done)*: `tpt_acou_wave::krylov::gmres` is restarted, right-preconditioned complex GMRES over any matvec closure, with a Jacobi option. It matches the dense BEM exterior solve. **Still open:** wiring it to the FMM operator on boundary nodes.
 - [ ] ISM with wall phase / complex impedance (low-frequency / modal behaviour)
 - [ ] Multi-parameter differentiable ray/ISM gradients (dimensions, per-band absorption,
       source/receiver position); evaluate `tpt-math-autodiff` / reverse mode
@@ -297,12 +297,13 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [ ] Python (PyO3) and WASM bindings
 
 ### 4.5 Adoption: examples, docs, templates
-- [ ] `examples/` *(partly done)*: done in `crates/tpt-acoustics/examples/`: `shoebox_rt60`,
-      `room_impulse_response`, `partition_stc`, `fan_noise_fwh`, `loudness_a_weighting`,
-      `spatial_audio_vbap`, each asserting against an analytic or literature value. **Still open:**
-      `sphere_radiation_bem` and `optimize_room_gradient`.
-- [ ] `tpt_acoustics::prelude` + `RoomBuilder` / `Simulation` builder API (10-line first program)
-- [ ] README: copy-paste quick start, does/doesn't-do table, badges, per-crate validation status
+- [x] `examples/` in `crates/tpt-acoustics/examples/`: `shoebox_rt60`, `room_impulse_response`,
+      `partition_stc`, `sphere_radiation_bem`, `fan_noise_fwh`, `optimize_room_gradient`,
+      `loudness_a_weighting`, `spatial_audio_vbap`. Each asserts against an analytic or literature
+      value. Listed in the README.
+- [ ] `tpt_acoustics::prelude` *(done)* + `RoomBuilder` / `Simulation` builder API (10-line first
+      program). The prelude and a doctested quick start are in; the builder is still open.
+- [ ] README: quick start, does/doesn't table and per-crate validation status are done; badges still open.
 - [ ] mdBook cookbook: solver-choice table, Schroeder frequency calculator, units/conventions, glossary
 - [ ] Validation page: analytic/standard reference vs ours, with tolerances
 - [ ] Templates (`cargo-generate` or `templates/`): room study, partition study, rotor-noise study (TOML input)

@@ -33,3 +33,7 @@ tpt-acou-verify = { path = "../tpt-acou-verify", version = "1.0.0", optional = t
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Examples build BEM data with the same complex type the solver uses.
+tpt-math-linalg-complex = { workspace = true }

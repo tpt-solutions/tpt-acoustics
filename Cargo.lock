@@ -449,6 +449,7 @@ dependencies = [
  "tpt-acou-verify",
  "tpt-acou-vibro",
  "tpt-acou-wave",
+ "tpt-math-linalg-complex",
 ]
 
 [[package]]

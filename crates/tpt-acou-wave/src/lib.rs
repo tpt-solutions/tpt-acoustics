@@ -34,6 +34,7 @@
 extern crate alloc;
 
 pub mod bem;
+pub mod krylov;
 pub mod mesh;
 
 #[cfg(feature = "fem")]
