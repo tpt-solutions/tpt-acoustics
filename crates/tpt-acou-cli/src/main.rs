@@ -12,6 +12,8 @@
 
 use std::process::ExitCode;
 
+mod study;
+
 use tpt_acoustics::core::medium::Medium;
 use tpt_acoustics::core::AcousticError;
 use tpt_acoustics::psycho::weighting::{
@@ -27,7 +29,8 @@ const USAGE: &str = "usage:
   tpt-acou rt60 <length> <width> <height> <alpha> [freq_hz]
   tpt-acou stc mass <kg_per_m2>
   tpt-acou stc tl <tl_1> ... <tl_16>
-  tpt-acou weight <freq_hz>";
+  tpt-acou weight <freq_hz>
+  tpt-acou study <file.toml>                     (see templates/room-study.toml)";
 
 /// A usage problem (exit status 2) or a failed computation (exit status 1).
 #[derive(Debug, PartialEq)]
@@ -57,6 +60,7 @@ fn run(args: &[String]) -> Result<String, CliError> {
         Some("rt60") => rt60(&args[1..]),
         Some("stc") => stc(&args[1..]),
         Some("weight") => weight(&args[1..]),
+        Some("study") => study_file(&args[1..]),
         Some(other) => Err(CliError::Usage(format!("unknown command '{other}'"))),
         None => Err(CliError::Usage("no command given".into())),
     }
@@ -155,6 +159,17 @@ fn weight(args: &[String]) -> Result<String, CliError> {
         c_weighting_db(f),
         itu468_weighting_db(f),
     ))
+}
+
+fn study_file(args: &[String]) -> Result<String, CliError> {
+    if args.len() != 1 {
+        return Err(CliError::Usage("study takes <file.toml>".into()));
+    }
+    let text = std::fs::read_to_string(&args[0])
+        .map_err(|e| CliError::Usage(format!("cannot read '{}': {e}", args[0])))?;
+    let config =
+        study::parse_study(&text).map_err(|e| CliError::Usage(format!("study file: {e}")))?;
+    study::run_study(&config).map_err(compute)
 }
 
 fn main() -> ExitCode {

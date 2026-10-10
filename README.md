@@ -75,6 +75,10 @@ means a closed-form result; "property" means a `proptest` invariant.
 | `tpt-acou-psycho` | IEC 61672 A-weighting, phon/sone anchor | ITU-R 468 table only partly confirmed; loudness is a simplified Zwicker model with spreading (~1.02 sone at 1 kHz/40 dB; not certified ISO 532-1) |
 | `tpt-acou-verify` | Proptest invariants (reciprocity, energy, CFL), Kani harnesses | Kani runs in CI on Linux only |
 
+The full reference-by-reference list, with tolerances and test names, is in
+[docs/validation.md](docs/validation.md). Solver choice, units and recipes are
+in [docs/cookbook.md](docs/cookbook.md).
+
 The `todo.md` tracker is the authoritative list of open work. Its Phase 4 is
 still in progress.
 

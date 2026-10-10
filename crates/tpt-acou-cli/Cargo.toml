@@ -17,6 +17,8 @@ path = "src/main.rs"
 
 [dependencies]
 tpt-acoustics = { path = "../tpt-acoustics", version = "1.0.0" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 
 [lints]
 workspace = true

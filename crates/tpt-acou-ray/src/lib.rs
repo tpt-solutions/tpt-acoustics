@@ -31,6 +31,7 @@ pub mod ray;
 pub mod rir;
 pub mod rng;
 pub mod scene;
+pub mod stl;
 pub use tpt_acou_core::vec3;
 
 pub use material::BoundaryMaterial;

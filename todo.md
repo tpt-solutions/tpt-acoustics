@@ -292,7 +292,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
       convolution-based auralization.
 - [ ] Differentiable inverse design: fit room to target RT60/C80; optimize panel absorption
 - [ ] Hybrid broadband RIR: ISM early + rays late + wave low-frequency, crossed at the Schroeder frequency
-- [x] OBJ import (`tpt_acou_ray::obj`: vertices, polygon faces, slash and negative indices, `usemtl` groups; one material per scene). **Still open:** STL import and an octave-band material database (ISO 354 style).
+- [x] STL import (`tpt_acou_ray::stl`, ASCII and binary, detected by size) and OBJ import (`tpt_acou_ray::obj`: vertices, polygon faces, slash and negative indices, `usemtl` groups; one material per scene). **Still open:** an octave-band material database (ISO 354 style).
 - [ ] Standards compliance report (TL, STC, OITC, Lw, ISO 3382, ISO 532)
 - [ ] Uncertainty quantification via seeded Monte Carlo over material uncertainty
 - [ ] Python (PyO3) and WASM bindings
@@ -306,10 +306,10 @@ Applied to every crate below (referenced by name, not repeated per crate):
       The builder validates dimensions, source and receiver once; `Simulation` gives the echogram,
       impulse response and Sabine T60. Still open: a `Simulation` path to ray-traced T30 and the wave solvers.
 - [ ] README: quick start, does/doesn't table and per-crate validation status are done; badges still open.
-- [ ] mdBook cookbook: solver-choice table, units/conventions, glossary *(Schroeder frequency is in `tpt_acou_ray::iso3382::schroeder_frequency_hz`; the book itself is not started)*
-- [ ] Validation page: analytic/standard reference vs ours, with tolerances
-- [ ] Templates (`cargo-generate` or `templates/`): room study, partition study, rotor-noise study (TOML input)
-- [x] `tpt-acou-cli` crate (`crates/tpt-acou-cli`, binary `tpt-acou`): `rt60`, `stc` (mass or 16 TL values) and `weight` subcommands, with exit status 2 for usage errors and 1 for failed computations.
+- [x] Cookbook as one page (`docs/cookbook.md`): solver-choice table, units and conventions, glossary, recipes. **Still open:** the mdBook layout around it.
+- [x] Validation page (`docs/validation.md`): every reference with its tolerance and test name. Open items are listed on the page.
+- [ ] Templates: room study done (`templates/room-study.toml`, run with `tpt-acou study`). **Still open:** partition-study and rotor-noise-study templates; partition and rotor studies need their own command.
+- [x] `tpt-acou-cli` crate (`crates/tpt-acou-cli`, binary `tpt-acou`): `rt60`, `stc` (mass or 16 TL values), `weight` and `study <file.toml>` subcommands, with exit status 2 for usage errors and 1 for failed computations.
 
 ### 4.6 Automation & hygiene
 - [x] Dependabot (`.github/dependabot.yml`, cargo + actions; Renovate not used). `cargo semver-checks`, `release-plz` + CHANGELOG.md still open

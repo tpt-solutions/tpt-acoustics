@@ -1,0 +1,28 @@
+# Room study template for `tpt-acou study <file>`.
+#
+# A shoebox room with uniform wall absorption, one source and one receiver.
+# All positions are in metres and must lie strictly inside the room.
+# Unknown keys are rejected, so a typo fails instead of being ignored.
+
+[room]
+# Length, width and height in metres.
+dimensions = [10.0, 8.0, 6.0]
+# Uniform absorption coefficient of all six walls, in [0, 1].
+absorption = 0.15
+
+[source]
+position = [2.0, 2.0, 3.0]
+
+[receiver]
+position = [8.0, 6.0, 3.0]
+
+[analysis]
+# Frequency for absorption and reverberation-time formulas, in Hz.
+frequency_hz = 1000.0
+# Ray-tracer particles. More rays give a smoother decay (about 20 000 is enough
+# for a 10 % T30 check in this room).
+rays = 20000
+# Highest image-source reflection order for clarity and definition.
+max_order = 8
+# RNG seed; the same seed gives the same report.
+seed = 7
