@@ -18,3 +18,11 @@ libm = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Benchmarks only; never part of the library's dependency graph.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "ray"
+harness = false

@@ -26,6 +26,7 @@ pub mod differentiable;
 pub mod ism;
 pub mod iso3382;
 pub mod material;
+pub mod obj;
 pub mod ray;
 pub mod rir;
 pub mod rng;

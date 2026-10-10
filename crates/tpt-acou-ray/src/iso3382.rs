@@ -115,9 +115,35 @@ pub fn reverberation_times(rir: &[f64], fs: f64) -> ReverbTimes {
     }
 }
 
+/// Schroeder frequency in Hz, above which a room's modal overlap is high
+/// enough for statistical (ray and diffuse-field) methods to apply:
+/// `f_S = 2000 √(T / V)` with `T` the reverberation time in seconds and `V`
+/// the room volume in cubic metres. Hybrid ISM/ray/wave crossovers use it.
+///
+/// Returns `None` for non-positive or non-finite `t60_s` or `volume_m3`.
+#[must_use]
+pub fn schroeder_frequency_hz(t60_s: f64, volume_m3: f64) -> Option<f64> {
+    if !(t60_s.is_finite() && t60_s > 0.0 && volume_m3.is_finite() && volume_m3 > 0.0) {
+        return None;
+    }
+    Some(2000.0 * libm::sqrt(t60_s / volume_m3))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schroeder_frequency_worked_example() {
+        // A 200 m³ room with T = 0.5 s: f_S = 2000 √(0.5/200) = 100 Hz.
+        let f = schroeder_frequency_hz(0.5, 200.0).unwrap();
+        assert!((f - 100.0).abs() < 1e-9, "{f}");
+        // Scales with √T and 1/√V.
+        let f4 = schroeder_frequency_hz(2.0, 200.0).unwrap();
+        assert!((f4 / f - 2.0).abs() < 1e-12);
+        assert!(schroeder_frequency_hz(0.0, 200.0).is_none());
+        assert!(schroeder_frequency_hz(0.5, -1.0).is_none());
+    }
 
     /// Deterministic exponential impulse response with a 60 dB energy decay
     /// in `t60` seconds: amplitude `10^(-3 t / t60)`, energy `10^(-6 t / t60)`.

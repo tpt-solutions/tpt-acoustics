@@ -1,0 +1,22 @@
+[package]
+name = "tpt-acou-cli"
+description = "Command-line front end for tpt-acoustics: reverberation time, STC and frequency weighting"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords = ["acoustics", "cli", "reverberation", "stc"]
+categories = ["command-line-utilities", "science"]
+
+[[bin]]
+name = "tpt-acou"
+path = "src/main.rs"
+
+[dependencies]
+tpt-acoustics = { path = "../tpt-acoustics", version = "1.0.0" }
+
+[lints]
+workspace = true
