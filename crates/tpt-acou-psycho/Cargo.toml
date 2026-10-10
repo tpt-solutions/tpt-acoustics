@@ -1,0 +1,22 @@
+[package]
+name = "tpt-acou-psycho"
+description = "Psychoacoustics: A/B/C and ITU-R 468 weighting, HRTFs, Ambisonics, VBAP, loudness and masking models"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+tpt-acou-core = { path = "../tpt-acou-core", version = "1.0.0", default-features = false }
+tpt-dsp-core = { workspace = true }
+num-complex = { workspace = true }
+tpt-math-linalg-dense = { workspace = true }
+libm = { workspace = true }
+
+[lints]
+workspace = true

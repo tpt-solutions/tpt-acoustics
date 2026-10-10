@@ -2,7 +2,7 @@ tpt-acoustics Design Specification (spec.txt)
 1. Overview
 Name: tpt-acoustics
 Description: A pure-Rust, AI-native computational acoustics library. It provides geometric room acoustics, wave acoustics (BEM/FEM for the Helmholtz equation), aeroacoustics, vibroacoustics, and psychoacoustic modeling without C/C++ FFI or external solver dependencies.
-License: MIT (all dependencies must be MIT or compatible; no Apache-2.0-only crates).
+License: Dual MIT OR Apache-2.0 (all dependencies must be MIT or compatible; no Apache-2.0-only crates).
 Core Philosophy: Unit-safe, no_std + alloc compatible at the core, differentiable for neural acoustic rendering and inverse design, and mathematically rigorous via native Rust verification tooling and from-scratch implementations.
 2. Design Principles
 Zero External Solver Dependencies: No COMSOL FFI, no ODEON, no C++ acoustic engines. All algorithms (Image Source Method, Boundary Element Method for Helmholtz, Ffowcs Williams-Hawkings) are implemented from scratch in pure Rust, leveraging tpt-math for linear algebra and tpt-fem for structural coupling.

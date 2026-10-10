@@ -1,0 +1,20 @@
+[package]
+name = "tpt-acou-ray"
+description = "Geometric acoustics: Image Source Method, Monte Carlo ray tracing, BVH scene intersection (no_std + alloc)"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+tpt-acou-core = { path = "../tpt-acou-core", version = "1.0.0", default-features = false }
+tpt-math-linalg-complex = { workspace = true }
+libm = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,29 @@
+[package]
+name = "tpt-acou-wave"
+description = "Wave acoustics: from-scratch frequency-domain BEM/FEM for the Helmholtz equation (no_std + alloc core)"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["fem"]
+# Interior acoustic cavity FEM via `tpt-fem-sparse` (structural-coupling path).
+fem = ["dep:tpt-fem-sparse"]
+# Experimental single-level multipole (FMM) acceleration of the BEM matvec.
+fmm = []
+
+[dependencies]
+tpt-acou-core = { path = "../tpt-acou-core", version = "1.0.0", default-features = false }
+tpt-math-linalg-complex = { workspace = true }
+tpt-math-linalg-dense = { workspace = true }
+libm = { workspace = true }
+tpt-fem-sparse = { workspace = true, optional = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,27 @@
+[package]
+name = "tpt-acou-core"
+description = "tpt-acoustics foundation: acoustic wave equations, media, and unit-safe quantities (no_std + alloc)"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["materials"]
+# Pull standard structural-material properties from `tpt-mat-database`
+# (github.com/tpt-solutions/tpt-materials). Off keeps the crate fully
+# no_std (the database crate is std-linked via serde_json).
+materials = ["dep:tpt-mat-database"]
+
+[dependencies]
+tpt-math-linalg-complex = { workspace = true }
+libm = { workspace = true }
+tpt-mat-database = { workspace = true, optional = true }
+
+[lints]
+workspace = true

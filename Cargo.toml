@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tpt-acou-core",
+    "crates/tpt-acou-ray",
+    "crates/tpt-acou-wave",
+    "crates/tpt-acou-aero",
+    "crates/tpt-acou-psycho",
+    "crates/tpt-acou-vibro",
+    "crates/tpt-acou-verify",
+    "crates/tpt-acoustics",
+]
+
+[workspace.package]
+authors = ["TPT Solutions"]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/tpt-solutions/tpt-acoustics"
+repository = "https://github.com/tpt-solutions/tpt-acoustics"
+keywords = ["acoustics", "physics", "simulation", "audio", "no-std"]
+categories = ["science", "simulation"]
+
+[workspace.dependencies]
+# In-house numeric substrate (sibling workspace; see todo.md "Open Decisions").
+# no_std crates in this workspace consume the numeric substrate in alloc-only
+# mode (std is never needed here; float transcendentals come from `libm`).
+tpt-math-linalg-dense = { path = "../tpt-math/crates/tpt-math-linalg-dense", version = "0.1.0", default-features = false, features = ["alloc"] }
+tpt-math-linalg-complex = { path = "../tpt-math/crates/tpt-math-linalg-complex", version = "0.1.0", default-features = false, features = ["alloc"] }
+tpt-math-geometry = { path = "../tpt-math/crates/tpt-math-geometry", version = "0.1.1" }
+tpt-math-numeric = { path = "../tpt-math/crates/tpt-math-numeric", version = "0.1.0" }
+tpt-math-signal-fft = { path = "../tpt-math/crates/tpt-math-signal-fft", version = "0.1.0" }
+tpt-math-signal-filter = { path = "../tpt-math/crates/tpt-math-signal-filter", version = "0.1.0" }
+tpt-math-autodiff = { path = "../tpt-math/crates/tpt-math-autodiff", version = "0.1.0" }
+tpt-fem-sparse = { path = "../tpt-fem/crates/tpt-fem-sparse", version = "0.1.1" }
+tpt-fem-modal = { path = "../tpt-fem/crates/tpt-fem-modal", version = "0.2.0" }
+# GitHub-hosted family crates (github.com/tpt-solutions), cloned as siblings.
+tpt-dsp-core = { path = "../tpt-dsp/tpt-dsp-core", version = "0.1.0", default-features = false }
+tpt-mat-database = { path = "../tpt-materials/crates/tpt-mat-database", version = "0.1.0" }
+num-complex = { version = "0.4", default-features = false, features = ["libm"] }
+
+libm = "0.2"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "warn"
+missing_docs = "warn"
+# The Kani verifier builds with `--cfg kani`; teach cargo's cfg checker so
+# `#[cfg(kani)]` modules don't warn.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
+[workspace.lints.clippy]
+# Numerical code indexes small fixed-size arrays in tight loops; the indexed
+# forms are the clearest expression of the math here, so the allowance must
+# out-prioritize the group.
+all = { level = "warn", priority = -1 }
+needless_range_loop = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

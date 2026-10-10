@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --all-features --doc
+
+  no_std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi
+      # Build every crate that promises no_std + alloc (see crate docs).
+      # Kept explicit so a std regression fails loudly and legibly.
+      - run: cargo build -p tpt-acou-core --target thumbv6m-none-eabi --no-default-features
+      - run: cargo build -p tpt-acou-ray --target thumbv6m-none-eabi --no-default-features
+      - run: cargo build -p tpt-acou-wave --target thumbv6m-none-eabi --no-default-features
+      - run: cargo build -p tpt-acou-aero --target thumbv6m-none-eabi --no-default-features
+      - run: cargo build -p tpt-acou-psycho --target thumbv6m-none-eabi --no-default-features
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  kani:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Kani
+        run: |
+          curl -sSfL --proto '=https' --tlsv1.2 \
+            https://github.com/model-checking/kani/releases/download/kani-0.66.0/kani-0.66.0-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz
+          echo "$PWD/kani-0.66.0/bin" >> "$GITHUB_PATH"
+      - name: Verify harnesses
+        run: |
+          cargo kani --project crates/tpt-acou-verify

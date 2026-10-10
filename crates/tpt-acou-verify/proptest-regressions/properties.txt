@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2bc819a5fe21882644d150ce762ff591245e0bd777819db7d070c1d83a1563d5 # shrinks to dims = [2.0, 2.0, 2.0], (src, rcv) = (Vec3 { x: 0.1, y: 0.1, z: 0.1 }, Vec3 { x: 0.1, y: 0.1, z: 4.258352979561504 })
+cc ea76f3d7580d810681aa4515f106399770373b19c05313fbc32690e58cacb474 # shrinks to room = ShoeboxRoom { dims: [2.0, 2.0, 2.0], walls: [BoundaryMaterial { name: "rigid", absorption: [(20.0, 0.0), (20000.0, 0.0)], scattering: [(20.0, 0.0), (20000.0, 0.0)] }, BoundaryMaterial { name: "rigid", absorption: [(20.0, 0.0), (20000.0, 0.0)], scattering: [(20.0, 0.0), (20000.0, 0.0)] }, BoundaryMaterial { name: "rigid", absorption: [(20.0, 0.0), (20000.0, 0.0)], scattering: [(20.0, 0.0), (20000.0, 0.0)] }, BoundaryMaterial { name: "rigid", absorption: [(20.0, 0.0), (20000.0, 0.0)], scattering: [(20.0, 0.0), (20000.0, 0.0)] }, BoundaryMaterial { name: "rigid", absorption: [(20.0, 0.0), (20000.0, 0.0)], scattering: [(20.0, 0.0), (20000.0, 0.0)] }, BoundaryMaterial { name: "rigid", absorption: [(20.0, 0.0), (20000.0, 0.0)], scattering: [(20.0, 0.0), (20000.0, 0.0)] }] }, (src, rcv) = (Vec3 { x: 0.1, y: 0.1, z: 0.1 }, Vec3 { x: 0.1, y: 0.1, z: 3.0550485965767655 }), freq = 100.0

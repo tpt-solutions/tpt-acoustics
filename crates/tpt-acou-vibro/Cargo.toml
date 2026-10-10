@@ -1,0 +1,23 @@
+[package]
+name = "tpt-acou-vibro"
+description = "Vibroacoustics: structural-acoustic coupling, radiation efficiency, transmission loss and STC"
+version = "1.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+tpt-acou-core = { path = "../tpt-acou-core", version = "1.0.0", default-features = false }
+tpt-acou-wave = { path = "../tpt-acou-wave", version = "1.0.0" }
+tpt-math-linalg-complex = { workspace = true }
+libm = { workspace = true }
+tpt-fem-modal = { workspace = true }
+tpt-fem-sparse = { workspace = true }
+
+[lints]
+workspace = true
