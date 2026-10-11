@@ -251,8 +251,8 @@ pub struct EnergyGradient {
 /// table.
 ///
 /// # Errors
-/// Returns [`AcousticError::InvalidGeometry`] unless both points lie strictly
-/// inside the room, and [`AcousticError::InvalidArgument`] for a non-positive
+/// Returns [`tpt_acou_core::error::AcousticError::InvalidGeometry`] unless both points lie strictly
+/// inside the room, and [`tpt_acou_core::error::AcousticError::InvalidArgument`] for a non-positive
 /// frequency or speed of sound.
 pub fn ism_energy_gradient(
     room: &ShoeboxRoom,

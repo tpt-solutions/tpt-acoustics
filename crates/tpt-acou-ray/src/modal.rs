@@ -16,7 +16,7 @@
 //!
 //! Below the Schroeder frequency the response is modal, and the image-source
 //! sum (which is accurate at high frequency) does not resolve individual
-//! modes. [`crate::rir::hybrid_broadband_rir`] uses the modal sum below the
+//! modes. [`crate::broadband::hybrid_broadband_ir`] uses the modal sum below the
 //! Schroeder frequency and the image-source sum above it.
 
 use alloc::vec::Vec;

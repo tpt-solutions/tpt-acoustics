@@ -34,7 +34,7 @@
 //!
 //! **Verification status:** the response column of Table 1 is taken from the
 //! official ITU-R BS.468-4 recommendation PDF (ITU-R, 1986, free download,
-//! https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.468-4-198607-I!!PDF-E.pdf).
+//! <https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.468-4-198607-I!!PDF-E.pdf>).
 //! All 21 rows were checked against the rendered page, not only the text
 //! extraction. The tolerance column is reproduced from the standard's mask
 //! points by log-frequency interpolation (see [`itu468_tolerance_db`]).
