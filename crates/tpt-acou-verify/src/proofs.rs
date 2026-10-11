@@ -63,7 +63,10 @@ fn room_constructor_rejects_nonpositive_dimension() {
     let d: f64 = kani::any();
     kani::assume(d.is_finite());
     kani::assume(d <= 0.0);
-    let result = ShoeboxRoom::new([d, 1.0, 1.0], core::array::from_fn(|_| BoundaryMaterial::rigid()));
+    let result = ShoeboxRoom::new(
+        [d, 1.0, 1.0],
+        core::array::from_fn(|_| BoundaryMaterial::rigid()),
+    );
     kani::assert(result.is_err(), "non-positive dimension must be rejected");
 }
 
