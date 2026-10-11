@@ -12,7 +12,12 @@ updates:
         update-types: ["minor", "patch"]
 
   # Workflow action versions (actions/checkout, dtolnay/rust-toolchain, ...).
+  # rust-toolchain tags are toolchain versions, not action releases: Dependabot
+  # read "1.120" as newer than the MSRV pin "1.85" and proposed a toolchain
+  # that does not exist. The MSRV pin in ci.yml is bumped by hand.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "dtolnay/rust-toolchain"
