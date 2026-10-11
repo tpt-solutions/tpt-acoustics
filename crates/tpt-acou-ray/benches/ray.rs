@@ -3,7 +3,8 @@
 //!
 //! Run with `cargo bench -p tpt-acou-ray`.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use tpt_acou_core::medium::Medium;
 use tpt_acou_ray::ism::{ShoeboxRoom, SPEED_OF_SOUND_REFERENCE};
 use tpt_acou_ray::material::BoundaryMaterial;

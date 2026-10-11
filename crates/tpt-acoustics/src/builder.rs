@@ -1,7 +1,8 @@
 //! A small builder over the shoebox workflow.
 //!
-//! [`RoomBuilder`] collects a box-shaped room, a wall material, a source and a
-//! receiver, and validates them once. [`Simulation`] then answers the common
+//! [`RoomBuilder`](crate::builder::RoomBuilder) collects a box-shaped room, a
+//! wall material, a source and a receiver, and validates them once.
+//! [`Simulation`](crate::builder::Simulation) then answers the common
 //! questions (echogram, impulse response, Sabine T60) without the caller
 //! passing geometry around. It wraps the lower-level APIs; nothing here adds
 //! physics.

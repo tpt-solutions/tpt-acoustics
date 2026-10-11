@@ -12,7 +12,7 @@
 //! | `vibro` | [`tpt_acou_vibro`] | radiation efficiency, TL, STC, ATVs |
 //! | `aero` | [`tpt_acou_aero`] | Lighthill, Curle, FW-H |
 //! | `psycho` | [`tpt_acou_psycho`] | weightings, HRTF, Ambisonics, VBAP, loudness, masking |
-//! | `verify` | [`tpt_acou_verify`] | proptest strategies and Kani harnesses |
+//! | `verify` | `tpt_acou_verify` | proptest strategies and Kani harnesses |
 //!
 //! # Example
 //!

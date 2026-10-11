@@ -143,4 +143,4 @@ jobs:
           echo "$PWD/kani-0.66.0/bin" >> "$GITHUB_PATH"
       - name: Verify harnesses
         run: |
-          cargo kani --project crates/tpt-acou-verify
+          cargo kani -p tpt-acou-verify
