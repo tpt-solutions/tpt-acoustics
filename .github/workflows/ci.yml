@@ -161,10 +161,11 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install Kani
         run: |
-          curl -sSfL --proto '=https' --tlsv1.2 \
-            https://github.com/model-checking/kani/releases/download/kani-0.66.0/kani-0.66.0-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz
-          echo "$PWD/kani-0.66.0/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          cargo install --locked --version 0.66.0 kani-verifier
+          cargo kani setup
+          # cargo only finds cargo-kani via ~/.cargo/bin; fail here, not in the proof step.
+          command -v cargo-kani
       - name: Verify harnesses
         run: |
           cargo kani -p tpt-acou-verify
