@@ -241,6 +241,75 @@ impl Simulation {
     pub fn direct_distance(&self) -> f64 {
         self.source.distance(self.receiver)
     }
+
+    /// Wave-based impulse response: modal solution below the Schroeder
+    /// frequency, image sources above it, signed and phase-consistent. This is
+    /// the room's modal wave solve, not the energy-only echogram.
+    ///
+    /// # Errors
+    /// Propagates the broadband solver's sampling and geometry errors.
+    pub fn broadband_ir(
+        &self,
+        sample_rate_hz: f64,
+        n_samples: usize,
+        max_order: u32,
+    ) -> Result<Vec<f64>, AcousticError> {
+        tpt_acou_ray::broadband::hybrid_broadband_ir(
+            &self.room,
+            self.source,
+            self.receiver,
+            sample_rate_hz,
+            n_samples,
+            max_order,
+            &self.medium,
+        )
+    }
+
+    /// Three-way impulse response: modal low frequencies and image-source high
+    /// frequencies up to `crossover_s`, then a ray-traced energy tail. The
+    /// rays are traced at 1 kHz and the tail is calibrated to the broadband
+    /// energy near the crossover (see
+    /// [`tpt_acou_ray::broadband::three_way_ir`]).
+    ///
+    /// # Errors
+    /// Propagates the tracer, broadband and calibration errors.
+    pub fn three_way_impulse_response(
+        &self,
+        sample_rate_hz: f64,
+        n_samples: usize,
+        max_order: u32,
+        n_rays: u32,
+        crossover_s: f64,
+        seed: u64,
+    ) -> Result<Vec<f64>, AcousticError> {
+        use tpt_acou_ray::broadband::three_way_ir;
+        use tpt_acou_ray::ism::SPEED_OF_SOUND_REFERENCE;
+        use tpt_acou_ray::ray::{trace_shoebox, RayTracerConfig};
+        let config = RayTracerConfig {
+            n_rays,
+            time_limit_s: 3.0,
+            capture_radius: 0.5,
+            min_energy: 1e-9,
+            seed,
+            speed_of_sound: SPEED_OF_SOUND_REFERENCE,
+        };
+        let traced = trace_shoebox(&self.room, self.source, self.receiver, 1000.0, &config)?;
+        let out = three_way_ir(
+            &self.room,
+            self.source,
+            self.receiver,
+            sample_rate_hz,
+            n_samples,
+            max_order,
+            &self.medium,
+            &traced.detected_times,
+            &traced.detected_energies,
+            crossover_s,
+            0.01,
+            seed,
+        )?;
+        Ok(out.samples)
+    }
 }
 
 #[cfg(test)]
@@ -323,5 +392,20 @@ mod tests {
         let sim = room_builder().build().unwrap();
         let echo: Vec<(f64, f64)> = sim.echogram(500.0, 4).unwrap();
         assert!(echo.iter().all(|&(t, w)| t >= 0.0 && w >= 0.0));
+    }
+
+    #[test]
+    fn broadband_and_three_way_responses_have_the_requested_length() {
+        let sim = room_builder().build().unwrap();
+        let wave = sim.broadband_ir(4_000.0, 2_048, 3).unwrap();
+        assert_eq!(wave.len(), 2_048);
+        assert!(wave.iter().all(|v| v.is_finite()));
+        assert!(wave.iter().any(|v| v.abs() > 0.0));
+
+        let three = sim
+            .three_way_impulse_response(4_000.0, 2_048, 3, 20_000, 0.1, 5)
+            .unwrap();
+        assert_eq!(three.len(), 2_048);
+        assert!(three.iter().all(|v| v.is_finite()));
     }
 }

@@ -28,7 +28,8 @@ use tpt_acoustics::ray::rir::hybrid_rir;
 use tpt_acoustics::ray::rir::rir_from_echogram;
 use tpt_acoustics::ray::sti::{sti_from_rir, STI_WEIGHTS_MALE};
 use tpt_acoustics::vibro::transmission::{
-    mass_law_diffuse_tl, sound_transmission_class, STC_BAND_HZ,
+    mass_law_diffuse_tl, rating_against_contour, sound_transmission_class, tii_rating,
+    tii_v2_rating, RatingContour, STC_BAND_HZ, TII_V2_BANDS_HZ,
 };
 
 /// A parsed study: one of the supported kinds.
@@ -149,6 +150,28 @@ pub struct PartitionStudy {
 pub struct PartitionSection {
     /// Surface mass in kg/m².
     pub surface_mass: f64,
+    /// Optional user-supplied rating contour. Without it the report uses the
+    /// built-in E413-shaped contour.
+    #[serde(default)]
+    pub rating_contour: Option<ContourSection>,
+}
+
+/// A rating contour typed into the study file. Its values come from the
+/// user, so `source` is required and appears in the report.
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ContourSection {
+    /// Band centre frequencies in Hz.
+    pub bands_hz: Vec<f64>,
+    /// Contour values in dB, one per band.
+    pub relative_db: Vec<f64>,
+    /// Largest allowed total deficit in dB.
+    pub max_total_deficit_db: f64,
+    /// Largest allowed single-band deficit in dB.
+    pub max_single_deficit_db: f64,
+    /// Where the values came from, for example the standard and edition they
+    /// were copied from. Quoted in the report.
+    pub source: String,
 }
 
 /// Settings for a rotor study.
@@ -327,6 +350,7 @@ fn run_compliance(config: &ComplianceStudy) -> Result<String, AcousticError> {
     let partition = PartitionStudy {
         partition: PartitionSection {
             surface_mass: config.partition.surface_mass,
+            rating_contour: None,
         },
     };
     let mut out = String::from("== ISO 3382-1 and IEC 60268-16 (room) ==\n");
@@ -347,16 +371,70 @@ fn run_partition(config: &PartitionStudy) -> Result<String, AcousticError> {
         ));
     }
     let air = Medium::air_20c();
-    let spectrum: Vec<(f64, f64)> = STC_BAND_HZ
-        .iter()
-        .map(|&f| (f, mass_law_diffuse_tl(mass, f, &air)))
-        .collect();
-    let rating = sound_transmission_class(&spectrum)?;
-    let mut out = format!("surface mass    : {mass:.2} kg/m2\n   f [Hz]   TL [dB]\n");
-    for (f, tl) in &spectrum {
-        out.push_str(&format!("{f:>9.0}   {tl:>7.1}\n"));
+    let mut out = format!(
+        "surface mass    : {mass:.2} kg/m2
+   f [Hz]   TL [dB]
+"
+    );
+    match &config.partition.rating_contour {
+        None => {
+            let spectrum: Vec<(f64, f64)> = STC_BAND_HZ
+                .iter()
+                .map(|&f| (f, mass_law_diffuse_tl(mass, f, &air)))
+                .collect();
+            let rating = sound_transmission_class(&spectrum)?;
+            for (f, tl) in &spectrum {
+                out.push_str(&format!(
+                    "{f:>9.0}   {tl:>7.1}
+"
+                ));
+            }
+            out.push_str(&format!(
+                "STC              : {rating} (built-in E413-shaped contour, values not checked against the standard)
+"
+            ));
+            let tii = tii_rating(&spectrum)?;
+            out.push_str(&format!(
+                "TII (open rating): {tii} (TPT Isolation Index v1, a project definition; not STC)
+"
+            ));
+            let v2_spectrum: Vec<(f64, f64)> = TII_V2_BANDS_HZ
+                .iter()
+                .map(|&f| (f, mass_law_diffuse_tl(mass, f, &air)))
+                .collect();
+            let tii2 = tii_v2_rating(&v2_spectrum)?;
+            out.push_str(&format!(
+                "TII v2 (comparison): {tii2} (63 Hz to 5 kHz; a project definition; not STC)
+"
+            ));
+        }
+        Some(c) => {
+            let contour = RatingContour::new(
+                c.bands_hz.clone(),
+                c.relative_db.clone(),
+                c.max_total_deficit_db,
+                c.max_single_deficit_db,
+                &c.source,
+            )?;
+            let spectrum: Vec<(f64, f64)> = contour
+                .bands_hz
+                .iter()
+                .map(|&f| (f, mass_law_diffuse_tl(mass, f, &air)))
+                .collect();
+            let rating = rating_against_contour(&spectrum, &contour)?;
+            for (f, tl) in &spectrum {
+                out.push_str(&format!(
+                    "{f:>9.0}   {tl:>7.1}
+"
+                ));
+            }
+            out.push_str(&format!(
+                "rating           : {rating} (user contour, source: {})
+",
+                contour.source
+            ));
+        }
     }
-    out.push_str(&format!("STC              : {rating}\n"));
     Ok(out)
 }
 
@@ -563,7 +641,9 @@ start_s = 0.5
             .lines()
             .find_map(|l| l.strip_prefix("STC              : "))
             .unwrap()
-            .trim()
+            .split_whitespace()
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         assert!((18..=26).contains(&rating), "STC {rating}");
@@ -587,6 +667,56 @@ start_s = 0.5
             matches!(result, Err(AcousticError::InvalidArgument(_))),
             "{result:?}"
         );
+    }
+
+    const USER_CONTOUR: &str = r#"
+kind = "partition"
+
+[partition]
+surface_mass = 20.0
+
+[partition.rating_contour]
+bands_hz = [125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0]
+relative_db = [-16.0, -13.0, -10.0, -7.0, -4.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]
+max_total_deficit_db = 32.0
+max_single_deficit_db = 8.0
+source = "test table, not a published standard"
+"#;
+
+    #[test]
+    fn partition_report_labels_built_in_and_user_contours() {
+        let built_in = "kind = \"partition\"
+
+[partition]
+surface_mass = 20.0
+";
+        assert!(report(built_in).contains("built-in E413-shaped contour"));
+        assert!(report(built_in).contains("TII (open rating)"));
+        let user = report(USER_CONTOUR);
+        assert!(
+            user.contains("user contour, source: test table, not a published standard"),
+            "{user}"
+        );
+        assert!(!user.contains("built-in"), "{user}");
+    }
+
+    #[test]
+    fn user_contour_requires_a_source_and_rejects_unknown_keys() {
+        let no_source = USER_CONTOUR.replace(
+            "source = \"test table, not a published standard\"
+",
+            "",
+        );
+        assert!(parse_study(&no_source).is_err());
+        let typo = USER_CONTOUR.replace("max_single_deficit_db", "max_singel_deficit_db");
+        assert!(parse_study(&typo).is_err());
+    }
+
+    #[test]
+    fn user_contour_with_wrong_length_is_an_error() {
+        let short = USER_CONTOUR.replace("relative_db = [-16.0, ", "relative_db = [");
+        let cfg = parse_study(&short).unwrap();
+        assert!(run_study(&cfg).is_err());
     }
 
     #[test]

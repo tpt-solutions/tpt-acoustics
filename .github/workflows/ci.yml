@@ -119,8 +119,7 @@ jobs:
           baseline-rev: ${{ github.event.pull_request.base.sha }}
 
   bench:
-    # Runs the criterion benchmarks and keeps the report as an artifact. A
-    # regression gate needs a stored baseline, which is not set up yet.
+    # Runs the criterion benchmarks and keeps the report as an artifact.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -130,6 +129,31 @@ jobs:
         with:
           name: criterion-report
           path: target/criterion
+
+  bench-gate:
+    # Regression gate for pull requests. The base commit and the head are
+    # benchmarked in this job on the same runner, so no stored baseline is
+    # needed. The comparison is in scripts/bench_gate.py.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Benchmark the base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
+          cd "$RUNNER_TEMP/base"
+          # Share the target directory so both runs write to one criterion dir.
+          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" \
+            cargo bench -p tpt-acou-ray --bench ray -- --noplot --save-baseline base
+      - name: Benchmark the head against the base
+        run: cargo bench -p tpt-acou-ray --bench ray -- --noplot --baseline base
+      - name: Compare
+        run: python3 scripts/bench_gate.py --threshold 0.15
 
   kani:
     runs-on: ubuntu-24.04

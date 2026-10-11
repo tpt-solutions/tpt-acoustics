@@ -162,7 +162,7 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [x] Ambisonics (B-format) encoding/decoding
 - [x] VBAP (Vector Base Amplitude Panning)
 - [x] Loudness model: Zwicker
-- [ ] Loudness model: Moore (unticked — not implemented; see Phase 4 Moore item)
+- [x] Loudness model: Moore (`tpt-acou-psycho/src/loudness_moore.rs`; see Phase 4 Moore item for its validation status)
 - [x] Masking curves
 - [x] Per-Crate Checklist Template
 
@@ -238,13 +238,20 @@ Applied to every crate below (referenced by name, not repeated per crate):
 
 ### 4.2 Correctness bugs
 - [x] **STC contour** (`tpt-acou-vibro/src/transmission.rs`): ASTM E413 shape, analytic tests.
-- [ ] **STC worked example** from the published standard. *(blocked)*
-- [ ] **ITU-R 468 table** (`tpt-acou-psycho/src/weighting.rs`): the 20 response values come from the official
-      BS.468-4 PDF (read via search, not by eye). Still open: a visual check against the printed table. The
-      tolerance column is not applied. *(blocked: printed-table check)*
-- [ ] **Quasi-peak detector** (BS.468): not implemented. Its charge and discharge constants are normative, and no
-      official source was found. The only fitted values found were one implementer's, and they are not used.
-      *(blocked: normative constants)*
+- [ ] **STC worked example** from the published standard. *(blocked: paywalled)* Partial: the rating rule takes any
+      user contour (`tpt_acou_vibro::transmission::RatingContour`, `rating_against_contour`; partition study
+      `[partition.rating_contour]` with a required `source`). The built-in E413-shaped values are not checked against
+      the standard, and the reports say so.
+- [x] **ITU-R 468 table** (`tpt_acou_psycho::weighting::ITU468_TABLE_DB`): all 21 Table 1 response values match the
+      official BS.468-4 PDF (free from ITU), checked on the rendered page. The 31.5 kHz row was missing and is added. The
+      tolerance column is reproduced from the mask points by log-frequency interpolation
+      (`tpt_acou_psycho::weighting::itu468_tolerance_db`, within 0.05 dB of all 20 ranged rows). The 31.5 kHz asymmetric
+      tolerance is not represented.
+- [x] **Quasi-peak detector, tone-burst limits only** (`tpt_acou_psycho::quasi_peak::QuasiPeakDetector`): a two-channel
+      peak-hold model whose parameters were found by search so that the readings meet BS.468-4 Tables 2 and 3 (single and
+      repeated 5 kHz bursts). The tests drive the sampled detector through the limits, and the smallest margin is 1.2
+      points (50 ms burst). The standard gives no circuit or time constants, so the internal structure is ours. The other
+      §2 requirements (overload, reversibility, overswing, calibration, input impedance) are not tested or claimed.
 - [x] **Moore–Glasberg loudness** (`tpt-acou-psycho/src/loudness_moore.rs`): implemented from the published
       model structure (ERB filters, absolute threshold, compressive specific loudness), anchored so that 1 kHz at
       40 dB is 1 sone. Tested for the anchor, monotonicity, masking and the ERB scale. **Not validated** against
@@ -273,15 +280,19 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [x] **ISM with complex impedance** (`ShoeboxRoom::transfer_function_impedance`): locally reacting oblique
       reflection from the unfolded image path. Validated: stiff walls reproduce the rigid room. A matched wall is not
       perfectly absorbing at oblique incidence (stated in the docs).
-- [ ] **Multi-parameter gradients of ray and ISM energy** (per-band absorption, source and receiver position). The
-      Sabine time has exact gradients in room dimensions and per-wall absorption (`design::sabine_with_gradient`,
-      finite-difference checked). The ISM energy gradient is still only with respect to one room length.
+- [ ] **Multi-parameter gradients of ray and ISM energy** (per-band absorption, source and receiver position). Done:
+      ISM, all 15 partials (`tpt_acou_ray::differentiable::ism_energy_gradient`, checked against finite differences). Done:
+      ray absorption, exact for fixed seeds (`tpt_acou_ray::ray::windowed_energy_absorption_gradient`, checked against
+      finite differences of the full tracer to 1e-4). Still open: ray gradients with respect to source and receiver
+      position, which change the capture events, so they are not differentiable. Scattering gradients are not done.
 - [x] **Room impulse response** from the echogram (`rir_from_echogram`); **hybrid ISM–ray RIR** (`hybrid_rir`, tail
       calibrated to the ISM energy at the crossover, gain returned); **broadband hybrid** (modal below the Schroeder
       frequency, image sources above: `broadband::hybrid_broadband_ir`, checked against the two transfer functions in
       their bands).
-- [ ] **Three-way hybrid** (ISM early, ray late, modal low frequency in one response). The pairs exist; the joint
-      construction does not.
+- [x] **Three-way hybrid** (ISM early, ray late, modal low frequency in one response): `tpt_acou_ray::broadband::three_way_ir`.
+      The signed broadband response (modal below f_S, ISM above) is kept up to the crossover, and a ray tail calibrated to
+      its energy follows. The tail is broadband, so modal low-frequency decay past the crossover is lost. Not validated
+      against a measured or wave-solved reference.
 - [x] **Rigid-box modal transfer** (`modal::RigidBoxModes`): reciprocity exact; resonance location and damping
       checked. The image sum is not used as a reference, because it is only conditionally convergent for lossless
       rigid rooms.
@@ -289,7 +300,10 @@ Applied to every crate below (referenced by name, not repeated per crate):
       validation cannot be bypassed on read.
 - [x] **rayon** (`tpt-acou-ray`, `parallel` feature). Per-ray seeds make the output independent of threads.
 - [x] **criterion benchmarks** (`crates/tpt-acou-ray/benches/ray.rs`), and a CI job that keeps the report.
-- [ ] **Benchmark regression gate**: needs a stored baseline and a comparison step. Not set up.
+- [x] **Benchmark regression gate**: `bench-gate` job in `.github/workflows/ci.yml` benchmarks the PR base and head on one
+      runner (criterion `--save-baseline` / `--baseline`), so no stored baseline is needed. `scripts/bench_gate.py` fails a
+      benchmark only when its mean slowdown exceeds 15 % and the 95 % lower bound is above zero. The gate logic is tested
+      (`--self-test`), and the criterion flow was run locally. Not run on GitHub yet.
 
 ### 4.4 New features (innovation)
 - [x] **ISO 3382 metrics** from an RIR: T20, T30, EDT, C50, C80, D50 (closed-form tests), and **sound strength G**
@@ -309,9 +323,10 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [x] **Octave-band absorption database** (`tpt_acou_ray::database`): three finishes, each taken from one named
       vendor chart, with the chart named in the data. Not a complete ISO 354 database. *(blocked: a cited, complete
       data source)*
-- [ ] **Standards compliance report**: the `compliance` study kind reports ISO 3382-1, IEC 60268-16 and ASTM E413
-      results, and lists what it does not report. Still missing: OITC (ASTM E1332 reference table, *blocked*) and Lw
-      (needs measured source data, ISO 3741).
+- [x] **Standards compliance report**: the `compliance` study kind reports ISO 3382-1, IEC 60268-16 and ASTM E413
+      results, and lists what it does not report (`run_compliance` in `crates/tpt-acou-cli/src/study.rs`, tested). The
+      two ratings it does not compute, OITC (ASTM E1332 reference table, *blocked*) and Lw (needs measured source data,
+      ISO 3741), stay open under Blockers.
 - [x] **Python bindings** (`bindings/python`, PyO3): `cargo check` passes. Not built into a wheel or imported here
       (needs a Python environment and `maturin`).
 - [x] **WASM bindings** (`crates/tpt-acou-wasm`): native tests pass, and the wasm32 build succeeds.
@@ -320,7 +335,8 @@ Applied to every crate below (referenced by name, not repeated per crate):
 - [x] **Examples**: `shoebox_rt60`, `room_impulse_response`, `partition_stc`, `sphere_radiation_bem`, `fan_noise_fwh`,
       `optimize_room_gradient`, `loudness_a_weighting`, `spatial_audio_vbap`. Each asserts against a reference.
 - [x] **Prelude, `RoomBuilder`, `Simulation`** (echogram, impulse response, ray-traced T30, STI, G).
-      [ ] A `Simulation` path to a wave solve.
+      [x] A `Simulation` path to a wave solve: `Simulation::broadband_ir` (modal solution below the Schroeder frequency,
+      image sources above) and `Simulation::three_way_impulse_response`. The modal solve is the rigid-box modal sum, not a BEM or FEM solve.
 - [x] **README**: quick start, examples table, does/doesn't table, validation status, CI and licence badges.
 - [x] **Cookbook** (`docs/cookbook.md`) and **validation page** (`docs/validation.md`).
 - [x] **mdBook layout** (`book.toml`, `docs/SUMMARY.md`). Not built here (mdbook not installed).
@@ -338,11 +354,30 @@ Applied to every crate below (referenced by name, not repeated per crate):
       exist, or a file that is missing.
 - [x] **Issue and PR templates**.
 
+## Phase 5 — Open, project-defined ratings (no standard text or tables used)
+
+> Our own definitions, documented in `docs/open-rating.md`. They are not STC, OITC or any other standard, and must
+> not be reported as such. Validation uses physics and closed-form cases only.
+
+- [x] **TPT Isolation Index v1** (`tpt_acou_vibro::transmission::tii_rating`): a log-frequency reference line at 5 dB per
+      octave, with the deficit rule. Tested against a line spectrum (rating = level + 2), against the diffuse mass law
+      (rating step 5 dB per doubling of mass, observed), against a 3 dB shift, and against missing bands. Shown in the
+      partition study, labelled as a project definition.
+- [x] **User-supplied contours** for the deficit rule (`RatingContour`, `rating_against_contour`), so that a licensed
+      table can be used by the person who holds it. The source is required and quoted in every report.
+- [x] **Open rating v2** (`tpt_acou_vibro::transmission::tii_v2_rating`): the same line contour on 20 bands (63 Hz to
+      5 kHz), with the total limit at 2 dB per band. Decision: v1 stays the headline value, and v2 is a comparison that
+      shows low-frequency sensitivity. Tested against the line spectrum and the mass law, and shown in the partition
+      report.
+
 ### Blockers (need a source the repository does not have)
-- **BS.468-4 printed table** (visual check), and the **quasi-peak constants** (normative).
+- ~~**BS.468-4 printed table**~~ resolved: the free ITU PDF was checked (rendered). The **quasi-peak** detector still needs
+  quasi-peak burst limits are met by a fitted model (see the quasi-peak item in Phase 4); the standard gives no circuit.
 - **ASTM E1332 reference contour** (OITC): only 3 of 16 levels were found.
-- **ASTM E413 worked example** for the STC check.
+- **ASTM E413 worked example** for the STC check. The user-contour input is in place, so a copied table can be checked here.
 - **ISO 532-2 reference values** (licensed) for Moore–Glasberg.
-- **IEC 60268-16 weights**: confirm the edition and the male and female tables.
+- **IEC 60268-16 weights**: confirm the edition and the male and female tables. Web search (round 3) found that
+  IEC 60268-16:2020 removed the female set and changed the male test spectrum, so the female weights in `sti.rs` are
+  from the 2003 edition and unverified. The male table in `sti.rs` is still a secondary source. Needs the standard itself.
 - **Complete octave-band absorption data** (ISO 354 style), with a citable source for each value.
 - **A published rotor *thickness* benchmark**: the Garrick–Watkins results found cover loading, not thickness.

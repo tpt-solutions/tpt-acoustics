@@ -10,3 +10,16 @@ kind = "partition"
 [partition]
 # Surface mass in kg/m².
 surface_mass = 5.0
+
+# Optional: rate against your own contour instead of the built-in E413-shaped
+# one. Copy the values from the standard you have (or your own method), and
+# give the source; the report quotes it. Delete this block to use the built-in
+# contour. The rating rule is the same: highest contour position whose total
+# deficit and largest single deficit stay within the limits.
+#
+# [partition.rating_contour]
+# bands_hz = [125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0]
+# relative_db = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+# max_total_deficit_db = 32.0
+# max_single_deficit_db = 8.0
+# source = "edition and table you copied the values from"

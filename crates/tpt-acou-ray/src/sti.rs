@@ -53,7 +53,9 @@ pub const STI_WEIGHTS_MALE: StiWeights = StiWeights {
     beta: [0.085, 0.078, 0.065, 0.011, 0.047, 0.095],
 };
 
-/// Female-talker weighting factors (IEC 60268-16 female set, same source).
+/// Female-talker weighting factors. The female set is not in IEC 60268-16:2020
+/// (it was removed in that edition), so these values come from the older
+/// edition via the same secondary source as the male set. Unverified.
 /// `Σα − Σβ = 1`.
 pub const STI_WEIGHTS_FEMALE: StiWeights = StiWeights {
     alpha: [0.000, 0.117, 0.223, 0.216, 0.328, 0.250, 0.194],

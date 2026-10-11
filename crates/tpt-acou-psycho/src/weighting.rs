@@ -32,14 +32,16 @@
 //! ITU-R BS.468-4 (log-frequency piecewise-linear interpolation; the standard
 //! curve peaks at +12.2 dB at 6.3 kHz).
 //!
-//! **Verification status:** the response column of the table is taken from the
-//! official ITU-R BS.468-4 recommendation PDF (ITU-R, 1986, 4th revision,
+//! **Verification status:** the response column of Table 1 is taken from the
+//! official ITU-R BS.468-4 recommendation PDF (ITU-R, 1986, free download,
 //! https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.468-4-198607-I!!PDF-E.pdf).
-//! The values were read from text extraction of that PDF, so a visual check
-//! against the printed table is still worth doing before a compliance claim.
+//! All 21 rows were checked against the rendered page, not only the text
+//! extraction. The tolerance column is reproduced from the standard's mask
+//! points by log-frequency interpolation (see [`itu468_tolerance_db`]).
 //!
 //! **Quasi-peak detection is not implemented.** This module weights spectra
-//! only; the BS.468 quasi-peak rectifier and its tone-burst tests are absent.
+//! only. The BS.468 quasi-peak rectifier is specified by tone-burst limits
+//! (Tables 2 and 3 of the same PDF), not by time constants, and is absent here.
 
 use tpt_acou_core::error::AcousticError;
 
@@ -79,10 +81,9 @@ pub fn c_weighting_db(f: f64) -> f64 {
 }
 
 /// Nominal ITU-R BS.468-4 response table: `(frequency_hz, gain_db)` pairs,
-/// the response column of Table 1 of Recommendation ITU-R BS.468-4 at its 20
-/// tabulated frequencies. The standard's tolerance column (±0.2 to ±2 dB) is
-/// not applied here.
-pub const ITU468_TABLE_DB: [(f64, f64); 20] = [
+/// the response column of Table 1 of Recommendation ITU-R BS.468-4 at its 21
+/// tabulated frequencies. The tolerance column is in [`itu468_tolerance_db`].
+pub const ITU468_TABLE_DB: [(f64, f64); 21] = [
     (31.5, -29.9),
     (63.0, -23.9),
     (100.0, -19.8),
@@ -103,7 +104,41 @@ pub const ITU468_TABLE_DB: [(f64, f64); 20] = [
     (14000.0, -5.3),
     (16000.0, -11.7),
     (20000.0, -22.2),
+    (31500.0, -42.7),
 ];
+
+/// The mask points of the BS.468-4 tolerance column: the frequencies whose
+/// tolerances the standard states directly (its Table 1 footnote 1 lists them
+/// as the basis for the interpolated entries).
+pub const ITU468_TOLERANCE_MASK_DB: [(f64, f64); 6] = [
+    (31.5, 2.0),
+    (100.0, 1.0),
+    (1000.0, 0.5),
+    (5000.0, 0.5),
+    (6300.0, 0.0),
+    (20000.0, 2.0),
+];
+
+/// Permitted deviation (dB) of a measuring system from the nominal BS.468-4
+/// response at `f`. The standard obtains the entries between mask points by
+/// linear interpolation on a log-frequency axis. Returns `None` outside the
+/// mask range (31.5 Hz to 20 kHz); the 31.5 kHz row has an asymmetric limit
+/// (+2.8 dB, −∞) that this function does not represent.
+#[must_use]
+pub fn itu468_tolerance_db(f: f64) -> Option<f64> {
+    let mask = &ITU468_TOLERANCE_MASK_DB;
+    let (first, last) = (mask[0].0, mask[mask.len() - 1].0);
+    if !(first..=last).contains(&f) {
+        return None;
+    }
+    let i = (0..mask.len() - 1)
+        .find(|&i| f <= mask[i + 1].0)
+        .unwrap_or(mask.len() - 2);
+    let (f0, t0) = mask[i];
+    let (f1, t1) = mask[i + 1];
+    let s = (libm::log(f) - libm::log(f0)) / (libm::log(f1) - libm::log(f0));
+    Some(t0 + (t1 - t0) * s)
+}
 
 /// ITU-R BS.468-4 noise weighting in dB at frequency `f` (log-frequency
 /// piecewise-linear interpolation of the nominal table, clamped outside).
@@ -334,6 +369,47 @@ mod tests {
         // Between 1 kHz and 2 kHz interpolates monotonically.
         let mid = itu468_weighting_db(1414.0);
         assert!(mid > 0.0 && mid < 5.6);
+    }
+
+    #[test]
+    fn itu468_tolerance_reproduces_the_standard_column() {
+        // Table 1 tolerance column of BS.468-4 (dB), rendered from the PDF. The
+        // 31.5 kHz row (+2.8 / −∞) is excluded: it is outside the mask.
+        const COLUMN: [(f64, f64); 20] = [
+            (31.5, 2.0),
+            (63.0, 1.4),
+            (100.0, 1.0),
+            (200.0, 0.85),
+            (400.0, 0.7),
+            (800.0, 0.55),
+            (1000.0, 0.5),
+            (2000.0, 0.5),
+            (3150.0, 0.5),
+            (4000.0, 0.5),
+            (5000.0, 0.5),
+            (6300.0, 0.0),
+            (7100.0, 0.2),
+            (8000.0, 0.4),
+            (9000.0, 0.6),
+            (10000.0, 0.8),
+            (12500.0, 1.2),
+            (14000.0, 1.4),
+            (16000.0, 1.6),
+            (20000.0, 2.0),
+        ];
+        // The standard states the entries to 0.1 dB, so allow the rounding.
+        for (f, want) in COLUMN {
+            let got = itu468_tolerance_db(f).unwrap();
+            assert!((got - want).abs() <= 0.05, "{f} Hz: {got} vs {want}");
+        }
+        assert!(itu468_tolerance_db(31_500.0).is_none());
+    }
+
+    #[test]
+    fn itu468_response_extends_to_31_5_khz() {
+        assert!(approx(itu468_weighting_db(31_500.0), -42.7, 1e-12));
+        assert!(itu468_weighting_db(25_000.0) < -22.2);
+        assert!(itu468_weighting_db(25_000.0) > -42.7);
     }
 
     #[test]

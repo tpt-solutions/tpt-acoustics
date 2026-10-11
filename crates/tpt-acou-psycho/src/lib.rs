@@ -32,6 +32,7 @@ pub mod hrtf;
 pub mod loudness;
 pub mod loudness_moore;
 pub mod masking;
+pub mod quasi_peak;
 pub mod spectrum;
 pub mod vbap;
 pub mod weighting;

@@ -92,6 +92,129 @@ pub fn hybrid_broadband_ir(
     Ok(out)
 }
 
+/// Result of [`three_way_ir`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThreeWayIr {
+    /// The impulse response, `n_samples` long.
+    pub samples: Vec<f64>,
+    /// Gain applied to the ray tail: the broadband energy in the calibration
+    /// window divided by the ray energy in the same window.
+    pub tail_gain: f64,
+}
+
+/// Three-way impulse response: modal low frequencies and image-source high
+/// frequencies up to the crossover, then a ray-traced energy tail.
+///
+/// Before `crossover_s` the samples are the signed broadband response
+/// ([`hybrid_broadband_ir`]), so modal low-frequency structure and the
+/// image-source early reflections both appear. From the crossover on, the
+/// samples come from the ray captures scaled by `tail_gain`, placed with the
+/// energy-only convention of [`crate::rir::rir_from_echogram`].
+///
+/// The gain matches the broadband energy in `±window_s` of the crossover to
+/// the ray energy in the same window, the same energy calibration as
+/// [`crate::rir::hybrid_rir`]. The tail is therefore broadband: it has no
+/// modal low-frequency structure. Long low-frequency modal decay that runs
+/// past `crossover_s` is lost, so choose a crossover late enough for the
+/// modal part to have decayed, or accept the cut.
+///
+/// # Errors
+/// Returns [`AcousticError::InvalidArgument`] for invalid sampling, times or
+/// energies, mismatched ray slices, a crossover outside the response, or no ray
+/// energy (or no broadband energy) in the calibration window.
+#[allow(clippy::too_many_arguments)]
+pub fn three_way_ir(
+    room: &ShoeboxRoom,
+    src: Vec3,
+    rcv: Vec3,
+    fs: f64,
+    n_samples: usize,
+    max_order: u32,
+    medium: &Medium,
+    ray_times: &[f64],
+    ray_energies: &[f64],
+    crossover_s: f64,
+    window_s: f64,
+    seed: u64,
+) -> Result<ThreeWayIr, AcousticError> {
+    if !(crossover_s.is_finite() && crossover_s > 0.0) {
+        return Err(AcousticError::InvalidArgument(
+            "crossover must be finite and > 0",
+        ));
+    }
+    if !(window_s.is_finite() && window_s > 0.0) {
+        return Err(AcousticError::InvalidArgument(
+            "window must be finite and > 0",
+        ));
+    }
+    if ray_times.len() != ray_energies.len() {
+        return Err(AcousticError::InvalidArgument(
+            "ray times and energies must have the same length",
+        ));
+    }
+    if ray_times
+        .iter()
+        .zip(ray_energies)
+        .any(|(&t, &e)| !(t.is_finite() && t >= 0.0 && e.is_finite() && e >= 0.0))
+    {
+        return Err(AcousticError::InvalidArgument(
+            "ray times and energies must be finite and >= 0",
+        ));
+    }
+    let mut samples = hybrid_broadband_ir(room, src, rcv, fs, n_samples, max_order, medium)?;
+    let split = libm::round(crossover_s * fs) as usize;
+    if split >= n_samples {
+        return Err(AcousticError::InvalidArgument(
+            "crossover lies beyond the end of the response",
+        ));
+    }
+
+    // Calibration: broadband energy and ray energy within ±window_s.
+    let in_window = |t: f64| (t - crossover_s).abs() <= window_s;
+    let broadband_energy: f64 = samples
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| in_window(i as f64 / fs))
+        .map(|(_, &h)| h * h)
+        .sum();
+    let ray_energy: f64 = ray_times
+        .iter()
+        .zip(ray_energies)
+        .filter(|&(&t, _)| in_window(t))
+        .map(|(_, &e)| e)
+        .sum();
+    if ray_energy <= 0.0 {
+        return Err(AcousticError::InvalidArgument(
+            "no ray energy in the calibration window; widen it or trace more rays",
+        ));
+    }
+    if broadband_energy <= 0.0 {
+        return Err(AcousticError::InvalidArgument(
+            "no broadband energy in the calibration window",
+        ));
+    }
+    let tail_gain = broadband_energy / ray_energy;
+
+    let late: Vec<(f64, f64)> = ray_times
+        .iter()
+        .zip(ray_energies)
+        .filter(|&(&t, _)| t >= crossover_s)
+        .map(|(&t, &e)| (t, e * tail_gain))
+        .collect();
+    samples.truncate(split);
+    samples.resize(n_samples, 0.0);
+    if !late.is_empty() {
+        let tail = crate::rir::rir_from_echogram(&late, fs, seed)?;
+        for (slot, &h) in samples[split..]
+            .iter_mut()
+            .zip(&tail[split.min(tail.len())..])
+        {
+            *slot = h;
+        }
+    }
+    Ok(ThreeWayIr { samples, tail_gain })
+}
+
 /// The spectrum on the same grid as [`hybrid_broadband_ir`] (bins 0..=N/2 for
 /// the padded length), for checks and plots. It uses the same crossover.
 ///
@@ -207,6 +330,96 @@ mod tests {
             0,
             1,
             &air
+        )
+        .is_err());
+    }
+
+    /// Ray captures 1 ms apart with unit energy, so no two impulses share a
+    /// sample and the tail's energy is exactly the gain times the ray energy.
+    fn synthetic_rays(start_s: f64, count: usize) -> (Vec<f64>, Vec<f64>) {
+        let times = (0..count).map(|i| start_s + i as f64 * 1e-3).collect();
+        (times, vec![1.0; count])
+    }
+
+    #[test]
+    fn three_way_matches_broadband_before_the_crossover() {
+        let air = Medium::air_20c();
+        let r = room();
+        let src = Vec3::new(1.0, 1.0, 1.0);
+        let rcv = Vec3::new(4.0, 3.0, 2.0);
+        let (fs, n, max_order) = (2_000.0, 1_024, 2);
+        let (times, energies) = synthetic_rays(0.2, 200);
+        let crossover = 0.2;
+        let out = three_way_ir(
+            &r, src, rcv, fs, n, max_order, &air, &times, &energies, crossover, 0.05, 7,
+        )
+        .unwrap();
+        let broadband = hybrid_broadband_ir(&r, src, rcv, fs, n, max_order, &air).unwrap();
+        let split = (crossover * fs).round() as usize;
+        assert_eq!(out.samples.len(), n);
+        assert!(out.samples.iter().all(|v| v.is_finite()));
+        assert_eq!(&out.samples[..split], &broadband[..split]);
+        assert!(out.tail_gain > 0.0 && out.tail_gain.is_finite());
+    }
+
+    #[test]
+    fn three_way_tail_energy_equals_the_calibrated_ray_energy() {
+        let air = Medium::air_20c();
+        let r = room();
+        let src = Vec3::new(1.0, 1.0, 1.0);
+        let rcv = Vec3::new(4.0, 3.0, 2.0);
+        let (fs, n) = (2_000.0, 1_024);
+        let (times, energies) = synthetic_rays(0.2, 200);
+        let out = three_way_ir(
+            &r, src, rcv, fs, n, 2, &air, &times, &energies, 0.2, 0.05, 7,
+        )
+        .unwrap();
+        let split = (0.2 * fs).round() as usize;
+        let tail_energy: f64 = out.samples[split..].iter().map(|h| h * h).sum();
+        let ray_energy: f64 = energies
+            .iter()
+            .zip(&times)
+            .filter(|&(_, &t)| t >= 0.2)
+            .map(|(&e, _)| e)
+            .sum();
+        assert!(
+            (tail_energy - out.tail_gain * ray_energy).abs() < 1e-9 * ray_energy,
+            "tail {tail_energy} vs {}",
+            out.tail_gain * ray_energy
+        );
+    }
+
+    #[test]
+    fn three_way_rejects_bad_inputs() {
+        let air = Medium::air_20c();
+        let r = room();
+        let src = Vec3::new(1.0, 1.0, 1.0);
+        let rcv = Vec3::new(4.0, 3.0, 2.0);
+        let (times, energies) = synthetic_rays(0.2, 200);
+        // Crossover past the end of a 1024-sample response at 2 kHz (0.512 s).
+        assert!(three_way_ir(
+            &r, src, rcv, 2_000.0, 1_024, 2, &air, &times, &energies, 0.6, 0.05, 1
+        )
+        .is_err());
+        // No ray energy near the crossover: the last capture is at 0.399 s.
+        assert!(three_way_ir(
+            &r, src, rcv, 2_000.0, 1_024, 2, &air, &times, &energies, 0.45, 0.01, 1
+        )
+        .is_err());
+        // Mismatched ray slices.
+        assert!(three_way_ir(
+            &r,
+            src,
+            rcv,
+            2_000.0,
+            1_024,
+            2,
+            &air,
+            &times,
+            &energies[1..],
+            0.2,
+            0.05,
+            1
         )
         .is_err());
     }

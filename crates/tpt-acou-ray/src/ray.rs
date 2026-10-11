@@ -193,6 +193,8 @@ impl RayTracerConfig {
 struct RayTally {
     /// `(arrival_time_s, energy)` for every receiver pass.
     detections: Vec<(f64, f64)>,
+    /// Wall hits made before each detection (aligned with `detections`).
+    detection_hits: Vec<[u32; 6]>,
     absorbed: f64,
     remaining: f64,
     bounces: u64,
@@ -229,23 +231,25 @@ where
 }
 
 /// Sums per-ray tallies into the run result.
-fn combine(tallies: Vec<RayTally>, n_rays: u32) -> RayTraceResult {
+fn combine(tallies: Vec<RayTally>, n_rays: u32) -> (RayTraceResult, Vec<[u32; 6]>) {
     let mut out = RayTraceResult {
         injected: 1.0,
         ..RayTraceResult::default()
     };
+    let mut hits = Vec::new();
     let mut bounces = 0_u64;
     for t in tallies {
         for (time, energy) in t.detections {
             out.detected_times.push(time);
             out.detected_energies.push(energy);
         }
+        hits.extend(t.detection_hits);
         out.absorbed += t.absorbed;
         out.remaining += t.remaining;
         bounces += t.bounces;
     }
     out.mean_bounces = bounces as f64 / f64::from(n_rays);
-    out
+    (out, hits)
 }
 
 /// Traces energy particles through a shoebox room (analytic wall
@@ -265,6 +269,33 @@ pub fn trace_shoebox(
     freq_hz: f64,
     config: &RayTracerConfig,
 ) -> Result<RayTraceResult, AcousticError> {
+    Ok(trace_shoebox_wall_hits(room, src, rcv, freq_hz, config)?.result)
+}
+
+/// A shoebox trace that also records, for every capture, how many times the
+/// particle hit each wall before that capture. Used for exact absorption
+/// gradients (see [`windowed_energy_absorption_gradient`]).
+#[derive(Debug, Clone)]
+pub struct WallHitTrace {
+    /// The same result [`trace_shoebox`] returns for this configuration.
+    pub result: RayTraceResult,
+    /// Wall-hit counts before each capture, aligned with
+    /// `result.detected_times` and `result.detected_energies`.
+    pub detection_hits: Vec<[u32; 6]>,
+}
+
+/// [`trace_shoebox`] with the per-capture wall-hit counts kept. The result is
+/// identical to [`trace_shoebox`] for the same inputs.
+///
+/// # Errors
+/// As [`trace_shoebox`].
+pub fn trace_shoebox_wall_hits(
+    room: &ShoeboxRoom,
+    src: Vec3,
+    rcv: Vec3,
+    freq_hz: f64,
+    config: &RayTracerConfig,
+) -> Result<WallHitTrace, AcousticError> {
     config.validate()?;
     if !room.contains(src) {
         return Err(AcousticError::InvalidArgument(
@@ -292,6 +323,7 @@ pub fn trace_shoebox(
         let mut dir = rng.next_unit_direction();
         let mut e = e0;
         let mut t = 0.0_f64;
+        let mut hits = [0_u32; 6];
         loop {
             if t > config.time_limit_s || e < config.min_energy {
                 tally.remaining += e;
@@ -308,11 +340,13 @@ pub fn trace_shoebox(
                 tally
                     .detections
                     .push((t + dist_along / config.speed_of_sound, e));
+                tally.detection_hits.push(hits);
                 // The particle keeps tracing: terminating at first capture
                 // would truncate the late decay and bias T30 steep.
             }
             tally.absorbed += e * alpha[wall];
             e *= 1.0 - alpha[wall];
+            hits[wall] += 1;
             t += t_hit / config.speed_of_sound;
             tally.bounces += 1;
             dir = if rng.next_f64() < scatter[wall] {
@@ -324,7 +358,85 @@ pub fn trace_shoebox(
         }
         tally
     };
-    Ok(combine(run_rays(config.n_rays, trace), config.n_rays))
+    let (result, detection_hits) = combine(run_rays(config.n_rays, trace), config.n_rays);
+    Ok(WallHitTrace {
+        result,
+        detection_hits,
+    })
+}
+
+/// Energy captured in the time window `[t0, t1]` and its exact derivative with
+/// respect to each wall's absorption coefficient at the trace frequency.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowedAbsorptionGradient {
+    /// Captured energy in the window (the sum of capture energies).
+    pub energy: f64,
+    /// `∂energy/∂α_w` for each wall, in [`crate::ism::WALL_LOW_X`] order.
+    pub d_absorption: [f64; 6],
+}
+
+/// Captured energy in `[t0, t1]` and its absorption gradient, from a
+/// [`WallHitTrace`] of the same room and frequency.
+///
+/// Each particle's energy at a capture is `e0 · Π (1 − α_w)^{n_w}`, where `n_w`
+/// is the number of hits on wall `w` so far. Ray paths depend on the scattering
+/// coefficients and the seed, not on absorption, so for fixed seeds the
+/// derivative is exact: `∂E/∂α_w = −Σ e_k · n_{k,w} / (1 − α_w)` over the
+/// captures in the window.
+///
+/// Two limits. Particles dropped at the `min_energy` floor are ignored; their
+/// energy is below the floor, so the effect is small when the floor is small.
+/// The derivative is with respect to absorption only. Source and receiver
+/// positions change the capture events, and their dependence is not
+/// differentiable.
+///
+/// # Errors
+/// Returns [`AcousticError::InvalidArgument`] if `t0 > t1`, or if a wall with a
+/// recorded hit has absorption 1 or more (its derivative diverges), or if the
+/// trace and room disagree in shape.
+pub fn windowed_energy_absorption_gradient(
+    traced: &WallHitTrace,
+    room: &ShoeboxRoom,
+    freq_hz: f64,
+    t0: f64,
+    t1: f64,
+) -> Result<WindowedAbsorptionGradient, AcousticError> {
+    if !(t0 <= t1 && t0.is_finite() && t1.is_finite()) {
+        return Err(AcousticError::InvalidArgument(
+            "window must satisfy t0 <= t1",
+        ));
+    }
+    if traced.detection_hits.len() != traced.result.detected_times.len() {
+        return Err(AcousticError::InvalidArgument(
+            "trace hit counts do not match its captures",
+        ));
+    }
+    let alpha: [f64; 6] = core::array::from_fn(|w| room.wall(w).absorption_at(freq_hz));
+    let mut energy = 0.0;
+    let mut d_absorption = [0.0; 6];
+    for (k, &t) in traced.result.detected_times.iter().enumerate() {
+        if t < t0 || t > t1 {
+            continue;
+        }
+        let e = traced.result.detected_energies[k];
+        energy += e;
+        for w in 0..6 {
+            let n = traced.detection_hits[k][w];
+            if n == 0 {
+                continue;
+            }
+            if alpha[w] >= 1.0 {
+                return Err(AcousticError::InvalidArgument(
+                    "a wall with absorption 1 has a divergent derivative",
+                ));
+            }
+            d_absorption[w] -= e * f64::from(n) / (1.0 - alpha[w]);
+        }
+    }
+    Ok(WindowedAbsorptionGradient {
+        energy,
+        d_absorption,
+    })
 }
 
 /// Traces energy particles through an arbitrary (closed) triangle scene,
@@ -386,7 +498,7 @@ pub fn trace_scene(
         }
         tally
     };
-    Ok(combine(run_rays(config.n_rays, trace), config.n_rays))
+    Ok(combine(run_rays(config.n_rays, trace), config.n_rays).0)
 }
 
 /// Backward-integrated (Schroeder) decay curve sampled at `bin_s` spacing:
@@ -728,5 +840,117 @@ mod determinism_tests {
     fn ray_seeds_differ_per_ray_and_per_run() {
         assert_ne!(ray_seed(1, 0), ray_seed(1, 1));
         assert_ne!(ray_seed(1, 0), ray_seed(2, 0));
+    }
+}
+
+#[cfg(test)]
+mod absorption_gradient_tests {
+    use super::*;
+    use crate::material::BoundaryMaterial;
+
+    fn mixed_room() -> ShoeboxRoom {
+        ShoeboxRoom::new(
+            [6.0, 5.0, 4.0],
+            [
+                BoundaryMaterial::concrete_painted(),
+                BoundaryMaterial::concrete_painted(),
+                BoundaryMaterial::curtain_heavy(),
+                BoundaryMaterial::glass(),
+                BoundaryMaterial::absorber_panel(),
+                BoundaryMaterial::concrete_painted(),
+            ],
+        )
+        .unwrap()
+    }
+
+    /// Same room with wall `w` replaced by a flat material of absorption `alpha`
+    /// and the original scattering at `freq_hz`, so the paths are unchanged.
+    fn with_wall_absorption(room: &ShoeboxRoom, w: usize, alpha: f64, freq_hz: f64) -> ShoeboxRoom {
+        let scatter = room.wall(w).scattering_at(freq_hz);
+        let walls = core::array::from_fn(|i| {
+            if i == w {
+                BoundaryMaterial::new(
+                    "fd",
+                    alloc::vec![(20.0, alpha), (20_000.0, alpha)],
+                    alloc::vec![(20.0, scatter), (20_000.0, scatter)],
+                )
+                .unwrap()
+            } else {
+                room.wall(i).clone()
+            }
+        });
+        ShoeboxRoom::new(room.dims(), walls).unwrap()
+    }
+
+    #[test]
+    fn absorption_gradient_matches_finite_differences_of_the_tracer() {
+        let room = mixed_room();
+        let freq = 1000.0;
+        let src = Vec3::new(1.2, 1.1, 1.3);
+        let rcv = Vec3::new(4.4, 3.6, 2.4);
+        let config = RayTracerConfig {
+            n_rays: 4000,
+            time_limit_s: 0.4,
+            capture_radius: 0.6,
+            min_energy: 1e-30,
+            seed: 11,
+            speed_of_sound: 343.0,
+        };
+        let traced = trace_shoebox_wall_hits(&room, src, rcv, freq, &config).unwrap();
+        let window = (0.0, 0.4);
+        let analytic =
+            windowed_energy_absorption_gradient(&traced, &room, freq, window.0, window.1).unwrap();
+        assert!(analytic.energy > 0.0);
+        // Same captures as the plain trace.
+        let plain = trace_shoebox(&room, src, rcv, freq, &config).unwrap();
+        assert_eq!(plain.detected_times, traced.result.detected_times);
+
+        let h = 1e-5;
+        let mut any_nonzero = false;
+        for w in 0..6 {
+            let alpha = room.wall(w).absorption_at(freq);
+            let energy_at = |a: f64| {
+                let r = with_wall_absorption(&room, w, a, freq);
+                let t = trace_shoebox_wall_hits(&r, src, rcv, freq, &config).unwrap();
+                windowed_energy_absorption_gradient(&t, &r, freq, window.0, window.1)
+                    .unwrap()
+                    .energy
+            };
+            let fd = (energy_at(alpha + h) - energy_at(alpha - h)) / (2.0 * h);
+            let an = analytic.d_absorption[w];
+            any_nonzero |= an.abs() > 0.0;
+            let scale = an.abs().max(fd.abs()).max(1e-12);
+            assert!(
+                (an - fd).abs() / scale < 1e-4,
+                "wall {w}: analytic {an} vs finite difference {fd}"
+            );
+        }
+        assert!(any_nonzero, "the test should exercise at least one wall");
+    }
+
+    #[test]
+    fn gradient_rejects_bad_windows_and_unit_absorption() {
+        let room = mixed_room();
+        let config = RayTracerConfig {
+            n_rays: 200,
+            time_limit_s: 0.2,
+            capture_radius: 0.6,
+            min_energy: 1e-30,
+            seed: 3,
+            speed_of_sound: 343.0,
+        };
+        let traced = trace_shoebox_wall_hits(
+            &room,
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(4.0, 3.0, 2.0),
+            1000.0,
+            &config,
+        )
+        .unwrap();
+        assert!(windowed_energy_absorption_gradient(&traced, &room, 1000.0, 0.3, 0.1).is_err());
+        let absorbing = with_wall_absorption(&room, 0, 1.0, 1000.0);
+        assert!(
+            windowed_energy_absorption_gradient(&traced, &absorbing, 1000.0, 0.0, 0.2).is_err()
+        );
     }
 }

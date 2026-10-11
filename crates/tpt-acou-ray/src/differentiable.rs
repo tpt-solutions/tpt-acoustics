@@ -14,7 +14,9 @@
 //! with derivatives `k` and `k+1`. Distances, the complex exponential and
 //! the `1/(4πd)` factor then flow through dual arithmetic unchanged.
 
-use crate::ism::ShoeboxRoom;
+use crate::ism::{
+    ShoeboxRoom, WALL_HIGH_X, WALL_HIGH_Y, WALL_HIGH_Z, WALL_LOW_X, WALL_LOW_Y, WALL_LOW_Z,
+};
 use crate::vec3::Vec3;
 
 /// Forward-mode dual number `v + d·ε` (`ε² = 0`).
@@ -216,6 +218,159 @@ pub fn ism_energy_and_gradient(
     Ok((energy.v, energy.d))
 }
 
+/// Number of parameters in [`ism_energy_gradient`]: 3 room lengths, 3 source
+/// coordinates, 3 receiver coordinates, and the 6 wall absorption values.
+pub const GRADIENT_PARAMETERS: usize = 15;
+
+/// Result of [`ism_energy_gradient`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnergyGradient {
+    /// `|H(f)|²` from the ISM sum.
+    pub energy: f64,
+    /// `∂|H|²` with respect to each parameter, in this order: room length
+    /// `L_x, L_y, L_z` (indices 0–2), source `s_x, s_y, s_z` (3–5), receiver
+    /// `r_x, r_y, r_z` (6–8), and the absorption coefficient at `freq_hz` of
+    /// wall `w` (9 + `w`, in [`crate::ism::WALL_LOW_X`]…[`crate::ism::WALL_HIGH_Z`]
+    /// order).
+    pub gradient: [f64; GRADIENT_PARAMETERS],
+}
+
+/// Gradient of the single-frequency ISM energy `|H(f)|²` with respect to the
+/// room lengths, the source and receiver positions, and each wall's
+/// absorption coefficient at `freq_hz`.
+///
+/// The derivatives are analytic. Each image's per-axis coordinate is linear in
+/// the parameters: for mirror index `k`, the image sits at `kL + s` (even `k`)
+/// or `kL + (L − s)` (odd `k`). The Green's function derivative is
+/// `∂G = G·(−1/d − ik)·∂d`, and the wall factor `√(1 − α)` has derivative
+/// `−1 / (2√(1 − α))`. A wall with `α ≥ 1` contributes a zero derivative, because
+/// its amplitude is clamped there.
+///
+/// The wall parameter is the absorption at one frequency. A tabulated wall
+/// material is therefore differentiated at that single value, not as a whole
+/// table.
+///
+/// # Errors
+/// Returns [`AcousticError::InvalidGeometry`] unless both points lie strictly
+/// inside the room, and [`AcousticError::InvalidArgument`] for a non-positive
+/// frequency or speed of sound.
+pub fn ism_energy_gradient(
+    room: &ShoeboxRoom,
+    src: Vec3,
+    rcv: Vec3,
+    freq_hz: f64,
+    speed_of_sound: f64,
+    max_order: u32,
+) -> Result<EnergyGradient, tpt_acou_core::AcousticError> {
+    use tpt_acou_core::AcousticError;
+    if !room.contains(src) || !room.contains(rcv) {
+        return Err(AcousticError::InvalidGeometry(
+            "gradient evaluation requires source and receiver strictly inside",
+        ));
+    }
+    if !(freq_hz.is_finite() && freq_hz > 0.0 && speed_of_sound.is_finite() && speed_of_sound > 0.0)
+    {
+        return Err(AcousticError::InvalidArgument(
+            "frequency and speed of sound must be finite and > 0",
+        ));
+    }
+    let dims = room.dims();
+    let k = core::f64::consts::TAU * freq_hz / speed_of_sound;
+    let amp: [f64; 6] = core::array::from_fn(|w| room.wall(w).amplitude_reflection(freq_hz));
+    // d(amp)/d(α) for each wall; zero where the amplitude is clamped at 0.
+    let damp: [f64; 6] = core::array::from_fn(|w| {
+        let a = room.wall(w).absorption_at(freq_hz);
+        if a < 1.0 {
+            -0.5 / libm::sqrt(1.0 - a)
+        } else {
+            0.0
+        }
+    });
+    let src_axes = [src.x, src.y, src.z];
+    let rcv_axes = [rcv.x, rcv.y, rcv.z];
+    let n = max_order as i64;
+
+    let mut h_re = 0.0;
+    let mut h_im = 0.0;
+    let mut dh_re = [0.0; GRADIENT_PARAMETERS];
+    let mut dh_im = [0.0; GRADIENT_PARAMETERS];
+    for kz in -n..=n {
+        for ky in -n..=n {
+            for kx in -n..=n {
+                let ks = [kx, ky, kz];
+                let order = (kx.abs() + ky.abs() + kz.abs()) as u32;
+                if order > max_order {
+                    continue;
+                }
+                // Per-axis coordinate c_a = image_a − r_a and its parameter
+                // derivatives; parameter layout as in `EnergyGradient`.
+                let mut c = [0.0; 3];
+                let mut dc = [[0.0; GRADIENT_PARAMETERS]; 3];
+                for a in 0..3 {
+                    let kk = ks[a];
+                    let even = kk % 2 == 0;
+                    let l = dims[a];
+                    let s = src_axes[a];
+                    let pos = kk as f64 * l + if even { s } else { l - s };
+                    c[a] = pos - rcv_axes[a];
+                    dc[a][a] = if even { kk as f64 } else { (kk + 1) as f64 };
+                    dc[a][3 + a] = if even { 1.0 } else { -1.0 };
+                    dc[a][6 + a] = -1.0;
+                }
+                let d2 = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+                let d = libm::sqrt(d2);
+                if d < 1e-9 {
+                    continue;
+                }
+                let mut dd = [0.0; GRADIENT_PARAMETERS];
+                for (p, item) in dd.iter_mut().enumerate() {
+                    *item = (0..3).map(|a| c[a] * dc[a][p]).sum::<f64>() / d;
+                }
+
+                // Walls hit along this image's path (multiplicities kept in order).
+                let mut walls = alloc::vec::Vec::new();
+                room.axis_walls(kx, WALL_LOW_X, WALL_HIGH_X, &mut walls);
+                room.axis_walls(ky, WALL_LOW_Y, WALL_HIGH_Y, &mut walls);
+                room.axis_walls(kz, WALL_LOW_Z, WALL_HIGH_Z, &mut walls);
+                let rc: f64 = walls.iter().map(|&w| amp[w]).product();
+                // ∂rc/∂α_w: one term per occurrence of w in the path.
+                let mut drc = [0.0; GRADIENT_PARAMETERS];
+                for (j, &w) in walls.iter().enumerate() {
+                    let others: f64 = walls
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, _)| i != j)
+                        .map(|(_, &u)| amp[u])
+                        .product();
+                    drc[9 + w] += damp[w] * others;
+                }
+
+                // G = exp(−ikd)/(4πd) and ∂G = G·(−1/d − ik)·∂d.
+                let scale = 1.0 / (4.0 * core::f64::consts::PI * d);
+                let g_re = libm::cos(k * d) * scale;
+                let g_im = -libm::sin(k * d) * scale;
+                h_re += g_re * rc;
+                h_im += g_im * rc;
+                for p in 0..GRADIENT_PARAMETERS {
+                    let dg_re = (-g_re / d + k * g_im) * dd[p];
+                    let dg_im = (-g_im / d - k * g_re) * dd[p];
+                    dh_re[p] += dg_re * rc + g_re * drc[p];
+                    dh_im[p] += dg_im * rc + g_im * drc[p];
+                }
+            }
+        }
+    }
+
+    let mut gradient = [0.0; GRADIENT_PARAMETERS];
+    for (p, item) in gradient.iter_mut().enumerate() {
+        *item = 2.0 * (h_re * dh_re[p] + h_im * dh_im[p]);
+    }
+    Ok(EnergyGradient {
+        energy: h_re * h_re + h_im * h_im,
+        gradient,
+    })
+}
+
 /// Dual-valued image coordinate offset `position_axis − rcv_axis` along
 /// `axis`, carrying `∂/∂L` as its derivative. Mirrors the ISM lattice: even
 /// mirror room `k` gives `k·L + s` (derivative `k`), odd gives
@@ -335,6 +490,100 @@ mod tests {
         // d/dθ exp(iθ) = i·exp(iθ): d(re) = -im, d(im) = re.
         assert!((z.re.d + z.im.v).abs() < 1e-12);
         assert!((z.im.d - z.re.v).abs() < 1e-12);
+    }
+
+    /// Plain single-frequency ISM energy `|H|²` with no derivative code: it
+    /// rebuilds the room from the parameters and sums the images directly.
+    fn plain_energy(
+        dims: [f64; 3],
+        alphas: [f64; 6],
+        src: Vec3,
+        rcv: Vec3,
+        freq_hz: f64,
+        speed_of_sound: f64,
+        order: u32,
+    ) -> f64 {
+        // The geometry comes from `image_sources`; the walls only supply the
+        // enumeration, and the reflection factors come from `alphas` directly.
+        // This keeps the finite-difference step from creating a table that is
+        // out of range (the rigid wall's absorption is 0).
+        let room =
+            ShoeboxRoom::new(dims, core::array::from_fn(|_| BoundaryMaterial::rigid())).unwrap();
+        let amp: [f64; 6] = core::array::from_fn(|w| libm::sqrt((1.0 - alphas[w]).max(0.0)));
+        let k = core::f64::consts::TAU * freq_hz / speed_of_sound;
+        let (mut re, mut im) = (0.0, 0.0);
+        for img in room.image_sources(src, order).unwrap() {
+            let d = img.position.distance(rcv);
+            if d < 1e-9 {
+                continue;
+            }
+            let rc: f64 = img.walls.iter().map(|&w| amp[w]).product();
+            let g = rc / (4.0 * core::f64::consts::PI * d);
+            re += g * libm::cos(k * d);
+            im -= g * libm::sin(k * d);
+        }
+        re * re + im * im
+    }
+
+    #[test]
+    fn multi_gradient_matches_finite_differences() {
+        let room = room();
+        let src = Vec3::new(1.2, 0.9, 1.1);
+        let rcv = Vec3::new(3.4, 2.6, 1.9);
+        let (f, c, order) = (500.0, crate::ism::SPEED_OF_SOUND_REFERENCE, 3);
+        let dims = room.dims();
+        let alphas: [f64; 6] = core::array::from_fn(|w| room.wall(w).absorption_at(f));
+        let g = ism_energy_gradient(&room, src, rcv, f, c, order).unwrap();
+        let base = plain_energy(dims, alphas, src, rcv, f, c, order);
+        assert!(
+            (g.energy - base).abs() <= 1e-12 * base,
+            "{} vs {base}",
+            g.energy
+        );
+
+        // Parameter vector: L, s, r, α (layout as in `EnergyGradient`).
+        let theta: [f64; GRADIENT_PARAMETERS] = [
+            dims[0], dims[1], dims[2], src.x, src.y, src.z, rcv.x, rcv.y, rcv.z, alphas[0],
+            alphas[1], alphas[2], alphas[3], alphas[4], alphas[5],
+        ];
+        let eval = |t: &[f64; GRADIENT_PARAMETERS]| {
+            plain_energy(
+                [t[0], t[1], t[2]],
+                [t[9], t[10], t[11], t[12], t[13], t[14]],
+                Vec3::new(t[3], t[4], t[5]),
+                Vec3::new(t[6], t[7], t[8]),
+                f,
+                c,
+                order,
+            )
+        };
+        for p in 0..GRADIENT_PARAMETERS {
+            let h = 1e-6 * theta[p].abs().max(1.0);
+            let mut up = theta;
+            up[p] += h;
+            let mut down = theta;
+            down[p] -= h;
+            let fd = (eval(&up) - eval(&down)) / (2.0 * h);
+            let an = g.gradient[p];
+            // The floor is relative to the energy, so an absent (zero) gradient
+            // is not compared against round-off.
+            let scale = an.abs().max(fd.abs()).max(1e-6 * base);
+            assert!(
+                (an - fd).abs() / scale < 1e-5,
+                "param {p}: analytic {an} vs finite difference {fd}"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_gradient_rejects_bad_arguments() {
+        let room = room();
+        let inside = Vec3::new(1.0, 1.0, 1.0);
+        assert!(
+            ism_energy_gradient(&room, Vec3::new(-1.0, 1.0, 1.0), inside, 500.0, 343.0, 1).is_err()
+        );
+        assert!(ism_energy_gradient(&room, inside, inside, 0.0, 343.0, 1).is_err());
+        assert!(ism_energy_gradient(&room, inside, inside, 500.0, -1.0, 1).is_err());
     }
 
     #[test]

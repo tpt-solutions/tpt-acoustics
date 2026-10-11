@@ -211,7 +211,7 @@ impl ShoeboxRoom {
 
     /// Wall-hit sequence along one axis for mirror-room index `k`, in
     /// traversal order. Length equals `|k|`.
-    fn axis_walls(&self, k: i64, low: usize, high: usize, out: &mut Vec<usize>) {
+    pub(crate) fn axis_walls(&self, k: i64, low: usize, high: usize, out: &mut Vec<usize>) {
         if k == 0 {
             return;
         }
